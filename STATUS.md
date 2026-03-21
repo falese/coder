@@ -10,7 +10,7 @@ The base prompt defines seven objectives. Status tracked below.
 
 | # | Objective | Status | Notes |
 |---|---|---|---|
-| 1 | CLI framework | 🟡 Skeleton | `generate` command end-to-end; no streaming, no `--adaptor`, no config |
+| 1 | CLI framework | 🟡 In progress | `generate` + config management done; no streaming, no `--adaptor` |
 | 2 | Model management | 🔴 Not started | No `models list/pull/info`; model path is a raw CLI flag |
 | 3 | LoRA adaptor framework | 🔴 Not started | `--adaptor` flag wired to mlx_lm not yet built |
 | 4 | Dataset curation tooling | 🔴 Not started | No JSONL pipeline |
@@ -48,7 +48,7 @@ The base prompt defines seven objectives. Status tracked below.
 
 | Issue | Title | Assessment |
 |---|---|---|
-| [#5](https://github.com/falese/coder/issues/5) | Config management (`~/.coder/config.toml`) | Well scoped. Blocks making `--model` optional. Start here. |
+| [#5](https://github.com/falese/coder/issues/5) | Config management (`~/.coder/config.toml`) | ✅ **Done** (f235cd1) |
 | [#3](https://github.com/falese/coder/issues/3) | Models: list, pull, info, memory reporting | Mostly clear. One open question (see below). |
 
 ### Phase 2 — Core UX

@@ -43,13 +43,15 @@ bun run generate      # coder generate (dev)
 
 ## Current state (2026-03-21)
 
-Walking skeleton complete (~5%). What exists:
+Walking skeleton + config (~10%). What exists:
 
-- `coder generate "<prompt>" --model <path>` — buffered, no streaming
+- `coder generate "<prompt>" [--model <path>]` — buffered, no streaming; `--model` optional when `default_model` set in config
+- `coder config set/get/show` — reads/writes `~/.coder/config.toml`
 - `parseMlxOutput`, `runMlx` — core subprocess layer
-- 10 tests passing, tsc clean, eslint clean
+- `loadConfig`, `setConfigValue`, `getConfigValue` — config with env overrides, `~` expansion, XDG-aware path
+- 31 tests passing, tsc clean, eslint clean
 
-What does NOT exist yet: streaming, `--adaptor` flag, config, `chat/models/adaptor/data` commands, observability.
+What does NOT exist yet: streaming, `--adaptor` flag, `chat/models/adaptor/data` commands, observability.
 
 ## Resolved decisions — do not reopen
 
@@ -59,11 +61,13 @@ What does NOT exist yet: streaming, `--adaptor` flag, config, `chat/models/adapt
 - **Embedding scorer:** dropped from v1 — composite score is tsc/eslint/test-pass-rate only
 - **Streaming + TTFT:** implement together in one PR (#2 + #10)
 - **Checkpoint resumption:** automatic when `weights/adaptor.safetensors` exists
+- **Unknown config keys:** silently ignored on load, rejected with error on `config set`
+- **Config missing on first run:** create with defaults silently, no error
+- **TOML parser:** `smol-toml` (pure TS, no native deps)
 
 ## Backlog priority order
 
-1. #5 Config (`~/.coder/config.toml`) ← start here
-2. #3 Models (list, pull, info, memory check)
+1. ~~#5 Config~~ ✅ done
 3. #2 + #10 Generate streaming + Observability (implement together)
 4. #4 Chat REPL
 5. #6 Adaptor install/list/update
