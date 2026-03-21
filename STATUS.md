@@ -10,33 +10,38 @@ The base prompt defines seven objectives. Status tracked below.
 
 | # | Objective | Status | Notes |
 |---|---|---|---|
-| 1 | CLI framework | 🟡 In progress | `generate` + config management done; no streaming, no `--adaptor` |
-| 2 | Model management | 🔴 Not started | No `models list/pull/info`; model path is a raw CLI flag |
+| 1 | CLI framework | 🟡 In progress | `generate` + config + model management done; no streaming, no `--adaptor` |
+| 2 | Model management | 🟡 In progress | `models list/pull/info/remove` done; no memory safety gate (warn/refuse on OOM) |
 | 3 | LoRA adaptor framework | 🔴 Not started | `--adaptor` flag wired to mlx_lm not yet built |
 | 4 | Dataset curation tooling | 🔴 Not started | No JSONL pipeline |
 | 5 | Adaptor training pipeline | 🔴 Not started | No `mlx_lm.lora` wrapper |
 | 6 | Quality scoring and eval harness | 🔴 Not started | No scorer, no eval suite runner |
 | 7 | Observability | 🔴 Not started | No structured logging, no metrics emission |
 
-### What the walking skeleton delivered
+### What is implemented
 
 - `coder generate "<prompt>" --model <path>` — spawns `mlx_lm.generate`, parses stdout, prints to stdout
 - `parseMlxOutput` — pure parser for mlx_lm output format with token/s extraction
 - `runMlx` — subprocess runner with actionable error handling (missing mlx_lm, bad model path)
 - Dry-run mode via `CODER_DRY_RUN=1` for integration testing without a real model
-- 10 tests (6 unit, 4 integration), `tsc --noEmit` clean, ESLint clean
+- `coder config set/get/show` — reads/writes `~/.coder/config.toml` via smol-toml; env overrides; XDG-aware path; `~` expansion
+- `coder models list` — scans `models_dir`, reports name, quant, disk size, memory estimate
+- `coder models pull <repo-id>` — downloads from HuggingFace via native HTTP API (no Python subprocess)
+- `coder models info <name>` — parses `config.json`, reports model type, quant bits, disk size, memory estimate
+- `coder models remove <name>` — deletes a model directory
+- 57 tests (26 unit, 31 integration), `tsc --noEmit` clean, ESLint clean
 
-### What the skeleton does not cover
+### What does not exist yet
 
-- Streaming (buffered only — adequate for skeleton, not for production UX)
+- Streaming (buffered only — adequate for testing, not for production UX)
 - LoRA adaptor loading (`--adaptor` flag not wired)
-- Config file (model path required on every invocation)
-- `chat`, `models`, `adaptor`, `data` commands
+- `chat`, `adaptor`, `data` commands
 - Observability (no timing, no structured logs)
-- File output (`-o` flag)
-- Context injection (`--context` flag)
+- File output (`-o` flag on generate)
+- Context injection (`--context` flag on generate)
+- Memory safety gate (refuse/warn when model + adaptor exceeds 18 GB)
 
-**Rough completion: ~5% of the full platform.**
+**Rough completion: ~20% of the full platform.**
 
 ---
 
@@ -49,7 +54,7 @@ The base prompt defines seven objectives. Status tracked below.
 | Issue | Title | Assessment |
 |---|---|---|
 | [#5](https://github.com/falese/coder/issues/5) | Config management (`~/.coder/config.toml`) | ✅ **Done** (f235cd1) |
-| [#3](https://github.com/falese/coder/issues/3) | Models: list, pull, info, memory reporting | Mostly clear. One open question (see below). |
+| [#3](https://github.com/falese/coder/issues/3) | Models: list, pull, info, memory reporting | ✅ **Done** |
 
 ### Phase 2 — Core UX
 
@@ -62,7 +67,7 @@ The base prompt defines seven objectives. Status tracked below.
 
 | Issue | Title | Assessment |
 |---|---|---|
-| [#6](https://github.com/falese/coder/issues/6) | Adaptor: install, list, update, info + manifest validation | Well scoped. New dependency (Zod) needs adding to package.json. |
+| [#6](https://github.com/falese/coder/issues/6) | Adaptor: install, list, update, info + manifest validation | Well scoped. Zod already in package.json. |
 | [#7](https://github.com/falese/coder/issues/7) | Data: JSONL curation pipeline | The `data extract` command is underdefined (see below). |
 
 ### Phase 4 — Training loop and quality
@@ -125,9 +130,6 @@ This needs a concrete format spec with an example before adaptor authors can wri
 
 ### 🟡 Medium priority — needs clarification before sprint
 
-#### #3 Models: download mechanism
-The issue says "fetches via `huggingface_hub` (Python subprocess)". This is a valid approach but adds a Python dependency that may not be installed. An alternative is direct HTTP download of model files via the HuggingFace API (no Python required beyond mlx_lm itself). Needs a decision: Python subprocess vs. native HTTP.
-
 #### #2 Generate: streaming implementation
 `mlx_lm.generate --stream` prints tokens to stdout as they are generated. Buffered reading (`new Response(proc.stdout).text()`) will not work for streaming — the process doesn't close stdout until generation ends. The issue notes this but doesn't specify the implementation. In Bun, streaming stdout requires reading from the `ReadableStream` in chunks. The approach needs to be defined and a prototype written before streaming can be tested properly.
 
@@ -147,11 +149,8 @@ No issue exists for GitHub Actions. A basic workflow (install deps, `bun test`, 
 #### Missing issue: performance benchmarking
 The base prompt specifies hard performance targets (first token < 2s, sustained > 20 tok/s on M3). No issue tracks measuring or validating these targets against a real model. The observability issue (#10) captures the metric emission, but there is no issue for a benchmark harness or pass/fail gate.
 
-#### Missing issue: README and documentation
-The README currently reads "lets try this". No issue tracks writing usage documentation, installation instructions, or adaptor author guides.
-
 #### Missing issue: memory safety check
-The base prompt specifies a 18GB memory constraint and requires the CLI to expose memory usage. No issue tracks enforcing this — e.g. refusing to load a model + adaptor combination that would exceed available unified memory, or warning when headroom is low.
+The base prompt specifies an 18 GB memory constraint and requires the CLI to expose memory usage. No issue tracks enforcing this — e.g. refusing to load a model + adaptor combination that would exceed available unified memory, or warning when headroom is low. The `models info` command now reports estimates; the gate itself is still missing.
 
 #### #6 Adaptor install: registry protocol undefined
 The issue notes "future: hosted registry with `coder adaptor install <name>` resolution" but gives no detail on the registry API, discovery mechanism, or namespace. This is intentionally deferred but should be stubbed as a separate issue so it doesn't get designed ad-hoc when someone tries to implement it.
@@ -161,22 +160,22 @@ The issue notes "future: hosted registry with `coder adaptor install <name>` res
 ## Dependency map
 
 ```
-#5 config
-  └── unblocks: all other commands (--model becomes optional)
+#5 config ✅
+  └── unblocked: all other commands (--model becomes optional)
 
-#3 models
-  └── unblocks: #11, #12 (need a real model downloaded)
+#3 models ✅
+  └── unblocked: #11, #12 (need a real model downloaded)
 
 #2 generate (streaming + adaptor flag)
-  └── depends on: #5 config, #6 adaptor commands
+  └── depends on: #5 config ✅, #6 adaptor commands
   └── should be co-implemented with: #10 observability (TTFT needs streaming)
 
 #4 chat
-  └── depends on: #5 config, #2 generate (shares streaming + adaptor infrastructure)
+  └── depends on: #5 config ✅, #2 generate (shares streaming + adaptor infrastructure)
   └── needs: chat template decision (see above)
 
 #6 adaptor (install/list/info)
-  └── depends on: #5 config (adaptors_dir path)
+  └── depends on: #5 config ✅ (adaptors_dir path)
   └── unblocks: #2 (--adaptor flag), #8 train, #9 eval, #11, #12
 
 #7 data pipeline
@@ -206,6 +205,6 @@ The issue notes "future: hosted registry with `coder adaptor install <name>` res
 ## Recommended next actions
 
 1. **Resolve the three blocking design questions** before writing any code: chat template strategy (#4), `data extract` format (#7), eval suite injection format (#9). These decisions affect multiple issues downstream.
-2. **Start with #5 (config)** — it's the smallest self-contained issue and immediately improves UX by making `--model` optional.
-3. **Implement #2 and #10 together** — streaming and TTFT measurement are tightly coupled; doing them separately will require re-opening one of them.
-4. **Create three missing issues** — CI/CD pipeline, performance benchmarking, README — before the backlog is considered complete.
+2. **Implement #2 and #10 together** — streaming and TTFT measurement are tightly coupled; doing them separately will require re-opening one of them.
+3. **Then #4 chat** — depends on streaming infrastructure from #2.
+4. **Create three missing issues** — CI/CD pipeline, performance benchmarking, memory safety gate — before the backlog is considered complete.

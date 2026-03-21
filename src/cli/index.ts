@@ -1,6 +1,8 @@
+#!/usr/bin/env bun
 import { Command } from "commander";
 import { createGenerateCommand } from "../commands/generate.js";
 import { createConfigCommand } from "../commands/config.js";
+import { createModelsCommand } from "../commands/models.js";
 
 const program = new Command();
 
@@ -11,5 +13,6 @@ program
 
 program.addCommand(createGenerateCommand());
 program.addCommand(createConfigCommand());
+program.addCommand(createModelsCommand());
 
 await program.parseAsync(process.argv);

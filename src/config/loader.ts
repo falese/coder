@@ -14,6 +14,7 @@ export { CONFIG_KEYS } from "./types.js";
 export const DEFAULT_CONFIG: CoderConfig = {
   default_model: "",
   adaptors_dir: "~/.coder/adaptors",
+  models_dir: "~/.coder/models",
   log_level: "info",
 };
 
@@ -67,6 +68,7 @@ export function loadConfig(): CoderConfig {
     const toWrite: Record<string, string> = {
       default_model: DEFAULT_CONFIG.default_model,
       adaptors_dir: DEFAULT_CONFIG.adaptors_dir,
+      models_dir: DEFAULT_CONFIG.models_dir,
       log_level: DEFAULT_CONFIG.log_level,
     };
     writeFileSync(configPath, stringify(toWrite));
@@ -79,6 +81,7 @@ export function loadConfig(): CoderConfig {
       config.log_level = process.env.CODER_LOG_LEVEL as CoderConfig["log_level"];
     }
     config.adaptors_dir = expandPath(config.adaptors_dir);
+    config.models_dir = expandPath(config.models_dir);
     return config;
   }
 
@@ -95,6 +98,7 @@ export function loadConfig(): CoderConfig {
   }
 
   config.adaptors_dir = expandPath(config.adaptors_dir);
+  config.models_dir = expandPath(config.models_dir);
   return config;
 }
 
@@ -103,6 +107,7 @@ export function setConfigValue(key: ConfigKey, value: string): void {
   const raw: Record<string, string> = {
     default_model: DEFAULT_CONFIG.default_model,
     adaptors_dir: DEFAULT_CONFIG.adaptors_dir,
+    models_dir: DEFAULT_CONFIG.models_dir,
     log_level: DEFAULT_CONFIG.log_level,
   };
 
