@@ -49,12 +49,12 @@ graph LR
 
 ## Prerequisites
 
-| Requirement | Details |
-|:---|:---|
-| **macOS** | Apple Silicon (M3–M5) |
-| **Bun** | >= 1.3 — [bun.sh](https://bun.sh) |
+| Requirement  | Details                              |
+| :----------- | :----------------------------------- |
+| **macOS**    | Apple Silicon (M3–M5)                |
+| **Bun**      | >= 1.3 — [bun.sh](https://bun.sh)    |
 | **Python 3** | with `mlx-lm` — `pip install mlx-lm` |
-| **Memory** | 18 GB unified memory recommended |
+| **Memory**   | 18 GB unified memory recommended     |
 
 ---
 
@@ -98,11 +98,11 @@ coder config show
 
 ### Environment variable overrides
 
-| Variable | Overrides |
-|:---|:---|
-| `CODER_MODEL` | `default_model` |
-| `CODER_LOG_LEVEL` | `log_level` |
-| `CODER_MODELS_DIR` | `models_dir` |
+| Variable            | Overrides                             |
+| :------------------ | :------------------------------------ |
+| `CODER_MODEL`       | `default_model`                       |
+| `CODER_LOG_LEVEL`   | `log_level`                           |
+| `CODER_MODELS_DIR`  | `models_dir`                          |
 | `CODER_CONFIG_PATH` | Config file path (useful for testing) |
 
 ---
@@ -179,12 +179,12 @@ coder chat --adaptor react-ts       # apply a named LoRA adaptor
 
 Conversation history is maintained in-memory across turns (sliding window, 6,000 token limit). REPL commands:
 
-| Command | Action |
-|:---|:---|
-| `/clear` | Reset conversation history |
-| `/save <file>` | Dump conversation to JSON file |
-| `/exit` | Quit (also Ctrl-D) |
-| Ctrl-C | Cancel current generation, return to prompt |
+| Command        | Action                                      |
+| :------------- | :------------------------------------------ |
+| `/clear`       | Reset conversation history                  |
+| `/save <file>` | Dump conversation to JSON file              |
+| `/exit`        | Quit (also Ctrl-D)                          |
+| Ctrl-C         | Cancel current generation, return to prompt |
 
 ---
 
@@ -237,11 +237,11 @@ graph TD
 
 The `eval` subcommand generates output for each prompt in the adaptor's `data/eval.jsonl`, scores it with `tsc --noEmit` (40%), `eslint` (30%), and `bun test evals/eval_suite.ts` (30%), prints a per-record table, and writes the composite score to `manifest.json`. Use `--baseline` to score the base model before training and establish a `baseline_pass_rate` for comparison.
 
-| Check | Weight |
-|:---|:---:|
-| `tsc --noEmit` | 40% |
-| `eslint` | 30% |
-| `bun test evals/eval_suite.ts` | 30% |
+| Check                          | Weight |
+| :----------------------------- | :----: |
+| `tsc --noEmit`                 |  40%   |
+| `eslint`                       |  30%   |
+| `bun test evals/eval_suite.ts` |  30%   |
 
 </details>
 
@@ -377,14 +377,14 @@ Without `--stream`, output is buffered until generation finishes. Add `--stream`
 
 ## Error reference
 
-| Error | Cause | Fix |
-|:---|:---|:---|
-| `mlx_lm not installed. Run: pip install mlx-lm` | Python mlx-lm package missing | `pip install mlx-lm` |
-| `Model not found at path: ...` | Path doesn't exist or isn't an MLX model directory | Check the path; use `coder models list` to see what's downloaded |
-| `Error: no model specified` | No `--model` flag and no `default_model` in config | `coder config set default_model <path>` |
-| `unknown config key "..."` | Typo in key name | Valid keys: `default_model`, `adaptors_dir`, `models_dir`, `logs_dir`, `log_level` |
-| `Warning: could not parse config.toml` | Malformed TOML | Check or delete `~/.coder/config.toml` |
-| `Error: model "<name>" not found` | Model name not in models_dir | Run `coder models list` to see available models |
+| Error                                           | Cause                                              | Fix                                                                                |
+| :---------------------------------------------- | :------------------------------------------------- | :--------------------------------------------------------------------------------- |
+| `mlx_lm not installed. Run: pip install mlx-lm` | Python mlx-lm package missing                      | `pip install mlx-lm`                                                               |
+| `Model not found at path: ...`                  | Path doesn't exist or isn't an MLX model directory | Check the path; use `coder models list` to see what's downloaded                   |
+| `Error: no model specified`                     | No `--model` flag and no `default_model` in config | `coder config set default_model <path>`                                            |
+| `unknown config key "..."`                      | Typo in key name                                   | Valid keys: `default_model`, `adaptors_dir`, `models_dir`, `logs_dir`, `log_level` |
+| `Warning: could not parse config.toml`          | Malformed TOML                                     | Check or delete `~/.coder/config.toml`                                             |
+| `Error: model "<name>" not found`               | Model name not in models_dir                       | Run `coder models list` to see available models                                    |
 
 ---
 
