@@ -54,10 +54,10 @@ export function createGenerateCommand(): Command {
               `--- context: ${basename(ctxFile)} ---\n${content}\n\n` + finalPrompt;
           }
 
-          // Resolve adaptor path
+          // Resolve adaptor path — mlx_lm --adapter-path expects the weights dir
           let adaptorPath: string | undefined;
           if (options.adaptor) {
-            adaptorPath = join(config.adaptors_dir, options.adaptor);
+            adaptorPath = join(config.adaptors_dir, options.adaptor, "weights");
           }
 
           const dryRun = process.env.CODER_DRY_RUN === "1";

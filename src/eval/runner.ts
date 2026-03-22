@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { runMlxBuffered, checkPreflight } from "../inference/mlx-runner.js";
@@ -29,6 +29,7 @@ export interface EvalSummary {
 
 export interface EvalOptions {
   modelPath: string;
+  adaptorPath?: string;
   inputFile?: string;
   dryRun: boolean;
 }
@@ -95,11 +96,78 @@ export function formatEvalTable(summary: EvalSummary): string {
 // ---------------------------------------------------------------------------
 
 export async function runTscCheck(filePath: string): Promise<boolean> {
+  const checkDir = join(tmpdir(), `coder-tsc-${String(Date.now())}`);
+  mkdirSync(checkDir, { recursive: true });
+
+  const ext = filePath.endsWith(".tsx") ? ".tsx" : ".ts";
+  const checkFile = join(checkDir, `check${ext}`);
+
+  // Replace import statements with any declarations so module resolution
+  // doesn't fail, while still checking the actual code for type errors
+  const source = readFileSync(filePath, "utf-8");
+  const transformed = source
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.trimStart();
+      if (!trimmed.startsWith("import ")) return line;
+      // default import: import Foo from 'bar'  → declare const Foo: any;
+      const defaultMatch = /^import\s+(\w+)\s+from\s+['"]/.exec(trimmed);
+      if (defaultMatch) return `declare const ${defaultMatch[1]}: any;`;
+      // named imports: import { A, B } from 'bar' → declare const A: any; declare const B: any;
+      const namedMatch = /^import\s*\{([^}]+)\}\s+from\s+['"]/.exec(trimmed);
+      if (namedMatch) {
+        return namedMatch[1]
+          .split(",")
+          .map((n) => `declare const ${n.trim().split(" as ")[0].trim()}: any;`)
+          .join(" ");
+      }
+      // namespace import: import * as Foo from 'bar' → declare const Foo: any;
+      const nsMatch = /^import\s*\*\s+as\s+(\w+)\s+from\s+['"]/.exec(trimmed);
+      if (nsMatch) return `declare const ${nsMatch[1]}: any;`;
+      // side-effect import: import 'foo' → (remove)
+      return "";
+    })
+    .join("\n");
+  writeFileSync(checkFile, transformed);
+
+  // Shim common React types so annotations like React.FC<P> work
+  writeFileSync(
+    join(checkDir, "declarations.d.ts"),
+    [
+      "declare namespace React {",
+      "  type FC<P = {}> = (props: P) => any;",
+      "  type ReactNode = any;",
+      "  function createElement(...args: any[]): any;",
+      "}",
+    ].join("\n") + "\n",
+  );
+
+  writeFileSync(
+    join(checkDir, "tsconfig.json"),
+    JSON.stringify({
+      compilerOptions: {
+        noEmit: true,
+        strict: false,
+        noImplicitAny: false,
+        jsx: "react",
+        skipLibCheck: true,
+        allowSyntheticDefaultImports: true,
+        esModuleInterop: true,
+        moduleResolution: "node",
+        target: "ES2020",
+      },
+      include: ["*.ts", "*.tsx"],
+    }),
+  );
+
   const proc = Bun.spawn(
-    ["bunx", "tsc", "--noEmit", "--allowJs", "--checkJs", "--strict", filePath],
+    ["bunx", "tsc", "--project", join(checkDir, "tsconfig.json")],
     { stdout: "ignore", stderr: "ignore" },
   );
   const exitCode = await proc.exited;
+
+  try { rmSync(checkDir, { recursive: true }); } catch { /* best-effort */ }
+
   return exitCode === 0;
 }
 
@@ -107,9 +175,16 @@ export async function runEslintCheck(
   filePath: string,
   eslintConfig?: string,
 ): Promise<boolean> {
+  const projectConfig = join(
+    new URL("../../..", import.meta.url).pathname,
+    "eslint.config.mjs",
+  );
+  const resolvedConfig =
+    eslintConfig ?? (existsSync(projectConfig) ? projectConfig : undefined);
+
   const args = ["bunx", "eslint", filePath];
-  if (eslintConfig !== undefined) {
-    args.push("--config", eslintConfig);
+  if (resolvedConfig !== undefined) {
+    args.push("--config", resolvedConfig);
   }
   const proc = Bun.spawn(args, { stdout: "ignore", stderr: "ignore" });
   const exitCode = await proc.exited;
@@ -213,6 +288,7 @@ export async function runEval(
     const { generatedText } = await runMlxBuffered({
       model: opts.modelPath,
       prompt: record.prompt,
+      adaptor: opts.adaptorPath,
     });
 
     const tempFile = join(

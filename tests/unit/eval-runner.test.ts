@@ -20,6 +20,8 @@ import {
   formatEvalTable,
   runEval,
   updateManifestScore,
+  runTscCheck,
+  runEslintCheck,
 } from "../../src/eval/runner.js";
 import { markPreflightDoneForTest } from "../../src/inference/mlx-runner.js";
 import type { EvalSummary } from "../../src/eval/runner.js";
@@ -34,6 +36,51 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(tempDir, { recursive: true, force: true });
   mock.restore();
+});
+
+// ---------------------------------------------------------------------------
+// runTscCheck
+// ---------------------------------------------------------------------------
+
+describe("runTscCheck", () => {
+  test("returns true for syntactically valid TypeScript", async () => {
+    const file = join(tempDir, "valid.ts");
+    writeFileSync(file, "const x: number = 1;\nexport {};\n");
+    const result = await runTscCheck(file);
+    expect(result).toBe(true);
+  });
+
+  test("returns false for TypeScript with a type error", async () => {
+    const file = join(tempDir, "invalid.ts");
+    writeFileSync(file, "const x: number = 'not a number';\nexport {};\n");
+    const result = await runTscCheck(file);
+    expect(result).toBe(false);
+  });
+
+  test("returns true for valid React component with unresolved imports", async () => {
+    const file = join(tempDir, "Button.tsx");
+    writeFileSync(file, [
+      "import React from 'react';",
+      "import { Button } from '@mui/material';",
+      "interface Props { label: string; }",
+      "export const MyButton: React.FC<Props> = ({ label }) => <Button>{label}</Button>;",
+    ].join("\n") + "\n");
+    const result = await runTscCheck(file);
+    expect(result).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runEslintCheck
+// ---------------------------------------------------------------------------
+
+describe("runEslintCheck", () => {
+  test("returns true for a clean file using project config", async () => {
+    const file = join(tempDir, "clean.ts");
+    writeFileSync(file, "export const x = 1;\n");
+    const result = await runEslintCheck(file);
+    expect(result).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

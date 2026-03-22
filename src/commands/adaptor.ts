@@ -170,9 +170,13 @@ export function createAdaptorCommand(): Command {
           process.exit(1);
         }
 
+        const weightsPath = join(adaptorDir, "weights");
+        const adaptorPath = options.baseline === true ? undefined : weightsPath;
+
         try {
           const summary = await runEval(adaptorDir, {
             modelPath: modelPath,
+            adaptorPath,
             inputFile: options.input,
             dryRun,
           });
