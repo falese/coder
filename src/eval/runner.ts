@@ -57,12 +57,14 @@ interface ScorerResult {
 // ---------------------------------------------------------------------------
 
 export function cleanGeneratedOutput(raw: string): string {
-  // If output starts with a fenced code block, extract its contents
-  const fencedMatch = /^```[^\n]*\n([\s\S]*?)```/.exec(raw);
+  // Extract the first fenced code block found anywhere in the output.
+  // Chat models (baseline) often prefix code with prose — we want the code,
+  // not the prose. This also handles the case where output starts with a fence.
+  const fencedMatch = /```[^\n]*\n([\s\S]*?)```/.exec(raw);
   if (fencedMatch) return fencedMatch[1].trimEnd();
 
-  // Otherwise truncate at the first closing fence or chat end token
-  const cutMatch = /^([\s\S]*?)(?:^```|<\|im_end\|>)/m.exec(raw);
+  // No fence: truncate at a chat end token if present
+  const cutMatch = /^([\s\S]*?)<\|im_end\|>/m.exec(raw);
   if (cutMatch) return cutMatch[1].trimEnd();
 
   return raw.trimEnd();
@@ -93,10 +95,10 @@ export function formatEvalTable(summary: EvalSummary): string {
   );
 
   const rows = summary.records.map((rec) => {
-    const prompt =
-      rec.prompt.length > 40
-        ? rec.prompt.slice(0, 40)
-        : rec.prompt;
+    // Use the last non-empty line (the jsdoc/comment/declaration anchor) for display
+    // so multi-line prompts that start with import context don't break the table.
+    const lastLine = rec.prompt.split("\n").filter((l) => l.trim()).at(-1) ?? rec.prompt;
+    const prompt = lastLine.length > 40 ? lastLine.slice(0, 40) : lastLine;
     return (
       prompt.padEnd(col.prompt) +
       rec.scores.tsc.toFixed(1).padEnd(col.tsc) +
@@ -231,8 +233,10 @@ export async function runTscCheck(
         return namedMatch[1]
           .split(",")
           .map((n) => {
-            const name = n.trim().split(" as ")[0].trim();
-            return isTypeOnly ? `type ${name} = any;` : `declare const ${name}: any;`;
+            // Use the local binding name (after 'as') so 'Button as MuiButton' → MuiButton
+            const parts = n.trim().split(/\s+as\s+/);
+            const localName = parts.length > 1 ? parts[1].trim() : parts[0].trim();
+            return isTypeOnly ? `type ${localName} = any;` : `declare const ${localName}: any;`;
           })
           .join(" ");
       }

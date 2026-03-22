@@ -9,5 +9,5 @@
   "eval_pass_rate": 0.76,
   "author": "",
   "description": "React TypeScript + MUI + Module Federation patterns",
-  "baseline_pass_rate": 0.13999999999999999
+  "baseline_pass_rate": 0.38
 }

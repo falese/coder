@@ -45,24 +45,25 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("cleanGeneratedOutput", () => {
-  test("strips closing fence and prose after code", () => {
-    const input = [
-      "import React from 'react';",
-      "export const Foo = () => <div/>;",
-      "```",
-      "This is a wrapper component...<|im_end|>",
-    ].join("\n");
-    const result = cleanGeneratedOutput(input);
-    expect(result).toBe("import React from 'react';\nexport const Foo = () => <div/>;");
-  });
-
   test("extracts code from fenced block when output starts with fence", () => {
     const input = "```tsx\nexport const x = 1;\n```\nSome explanation.";
     const result = cleanGeneratedOutput(input);
     expect(result).toBe("export const x = 1;");
   });
 
-  test("strips im_end token without fence", () => {
+  test("extracts code from fenced block preceded by chat prose (baseline model behaviour)", () => {
+    const input = [
+      "Certainly! Below is a React component that wraps MUI Button.",
+      "```typescript",
+      "export const AppButton = () => <Button />;",
+      "```",
+      "This component ensures consistent padding.",
+    ].join("\n");
+    const result = cleanGeneratedOutput(input);
+    expect(result).toBe("export const AppButton = () => <Button />;");
+  });
+
+  test("strips im_end token when no fence present", () => {
     const input = "export const x = 1;\n<|im_end|>";
     const result = cleanGeneratedOutput(input);
     expect(result).toBe("export const x = 1;");
@@ -94,6 +95,20 @@ describe("runTscCheck", () => {
     const result = await runTscCheck(file);
     expect(result.pass).toBe(false);
     expect(result.output).toContain("error TS");
+  });
+
+  test("uses local alias name for 'import { X as Y }' so re-imports don't redeclare", async () => {
+    const file = join(tempDir, "alias.ts");
+    // Prompt imports Button; generated code re-imports it as MuiButton.
+    // Without alias fix both become 'declare const Button: any' → TS2451.
+    writeFileSync(file, [
+      "import { Button } from '@mui/material';",
+      "import { Button as MuiButton } from '@mui/material';",
+      "export const x = Button;",
+      "export const y = MuiButton;",
+    ].join("\n") + "\n");
+    const result = await runTscCheck(file);
+    expect(result.pass).toBe(true);
   });
 
   test("returns pass:true for JSX component with unresolved imports (no declarations file)", async () => {
@@ -260,6 +275,27 @@ describe("formatEvalTable", () => {
     const table = formatEvalTable(summary);
     expect(table).not.toContain("a".repeat(60));
     expect(table).toContain("a".repeat(40));
+  });
+
+  test("multi-line prompt shows last non-empty line in table", () => {
+    const summary: EvalSummary = {
+      records: [
+        {
+          prompt: "import React from 'react';\nimport { Button } from '@mui/material';\n\n/** Button with padding */",
+          scores: { tsc: 1, eslint: 1, tests: 1 },
+          composite: 1.0,
+          generatedCode: "export const x = 1;",
+          diagnostics: { tsc: "", eslint: "", tests: "" },
+        },
+      ],
+      meanTsc: 1,
+      meanEslint: 1,
+      meanTests: 1,
+      meanComposite: 1.0,
+    };
+    const table = formatEvalTable(summary);
+    expect(table).toContain("/** Button with padding */");
+    expect(table).not.toContain("import React");
   });
 });
 
