@@ -37,7 +37,7 @@ The base prompt defines seven objectives. Status tracked below.
 - `coder adaptor eval <name> [--baseline] [--input <file>]` — generates output for each eval prompt, scores via tsc/eslint/bun-test (weights 0.4/0.3/0.3), prints table, writes `eval_pass_rate` (or `baseline_pass_rate`) to manifest; `CODER_DRY_RUN=1` returns 0.5 for all dimensions
 - `coder logs` — streams `~/.coder/logs/coder.log` to stdout
 - `coder data ingest <glob>` — walks source files, one JSONL record per file (skips binary + >100KB)
-- `coder data extract --adaptor <name>` — applies `extract.json` rules (jsdoc/line_comment anchors → next_function/next_block completions)
+- `coder data extract --adaptor <name>` — applies `extract.json` rules; prompt anchors: `jsdoc`, `line_comment`, `ts_declare`; completion anchors: `next_function`, `next_block`, `declare_body`, `constructor_call`
 - `coder data deduplicate <file>` — exact dedup + Jaccard trigram near-dedup (threshold 0.85)
 - `coder data validate <file>` — gates non-empty fields and ≤2048 token limit (chars/4)
 - `coder data split <file>` — Fisher-Yates deterministic shuffle (seed 42), 90/10 train/eval split
@@ -46,12 +46,13 @@ The base prompt defines seven objectives. Status tracked below.
 - Memory safety gate — `modelDiskBytes × 1.2 + adaptorBytes`; refuses >18 GB, warns <2 GB headroom; bypassed by `CODER_DRY_RUN=1`
 - Preflight check — verifies `python3` and `mlx_lm` present before first subprocess spawn; cached per process
 - Structured JSON logger — `generation_start` / `generation_complete` events (TTFT, tok/s) to `~/.coder/logs/coder.log`
-- 271 tests (unit + integration), `tsc --noEmit` clean, ESLint clean
+- 276 tests (unit + integration), `tsc --noEmit` clean, ESLint clean
 
 ### What does not exist yet
 
 - Performance benchmark harness (#14)
-- Domain adaptor packs: React/TS (#11), GraphQL (#12)
+- react-ts adaptor pack (#11): code complete (extract anchors + pack structure in `adaptors/react-ts/`) — data curation + training runtime steps pending
+- GraphQL adaptor pack (#12): blocked by #11 runtime completion
 
 **Rough completion: ~90% of the full platform.**
 
@@ -96,7 +97,7 @@ The base prompt defines seven objectives. Status tracked below.
 
 | Issue | Title | Status |
 |---|---|---|
-| [#11](https://github.com/falese/coder/issues/11) | React/TS adaptor pack | 🔴 Open |
+| [#11](https://github.com/falese/coder/issues/11) | React/TS adaptor pack | 🟡 In progress — code done, data curation + training pending |
 | [#12](https://github.com/falese/coder/issues/12) | GraphQL adaptor pack | 🔴 Blocked by #11 |
 | [#16](https://github.com/falese/coder/issues/16) | Adaptor registry protocol (design spike) | 🔴 Open — design only |
 

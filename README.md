@@ -272,7 +272,7 @@ coder data extract --adaptor react-ts --input raw.jsonl \
 coder data deduplicate extracted.jsonl --output deduped.jsonl  # remove near-dupes (Jaccard 0.85)
 coder data validate deduped.jsonl                           # gates: non-empty, ≤2048 tokens
 coder data split deduped.jsonl \
-  --output-dir ~/.coder/adaptors/react-ts/data/             # 90/10 → train.jsonl + eval.jsonl
+  --output-dir ~/.coder/adaptors/react-ts/data/             # 90/10 → train.jsonl + valid.jsonl
 coder data stats deduped.jsonl                              # count, token percentiles, dup rate
 ```
 
@@ -391,7 +391,7 @@ Without `--stream`, output is buffered until generation finishes. Add `--stream`
 ## Development
 
 ```bash
-bun test                    # all 250 tests
+bun test                    # all 276 tests
 bun test tests/unit         # unit tests only
 bun test tests/integration  # integration tests only
 bun run build               # tsc --noEmit
