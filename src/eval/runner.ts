@@ -13,10 +13,18 @@ export interface DimensionScores {
   tests: number;
 }
 
+export interface DimensionDiagnostics {
+  tsc: string;
+  eslint: string;
+  tests: string;
+}
+
 export interface EvalRecord {
   prompt: string;
   scores: DimensionScores;
   composite: number;
+  generatedCode: string;
+  diagnostics: DimensionDiagnostics;
 }
 
 export interface EvalSummary {
@@ -37,6 +45,11 @@ export interface EvalOptions {
 interface JsonlRecord {
   prompt: string;
   completion: string;
+}
+
+interface ScorerResult {
+  pass: boolean;
+  output: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -103,11 +116,73 @@ export function formatEvalTable(summary: EvalSummary): string {
   return [header, divider, ...rows, divider, meanRow].join("\n");
 }
 
+export function formatEvalReport(summary: EvalSummary): string {
+  const sections: string[] = [
+    `# Eval Report`,
+    ``,
+    `| Dimension | Mean Score |`,
+    `|-----------|------------|`,
+    `| TSC       | ${summary.meanTsc.toFixed(3)}       |`,
+    `| ESLint    | ${summary.meanEslint.toFixed(3)}       |`,
+    `| Tests     | ${summary.meanTests.toFixed(3)}       |`,
+    `| Composite | ${summary.meanComposite.toFixed(3)}       |`,
+    ``,
+  ];
+
+  for (const rec of summary.records) {
+    const tscIcon = rec.scores.tsc === 1 ? "✓" : "✗";
+    const eslintIcon = rec.scores.eslint === 1 ? "✓" : "✗";
+    const testsIcon = rec.scores.tests === 1 ? "✓" : "✗";
+
+    sections.push(`---`);
+    sections.push(``);
+    sections.push(`## Prompt`);
+    sections.push(``);
+    sections.push(`\`\`\``);
+    sections.push(rec.prompt);
+    sections.push(`\`\`\``);
+    sections.push(``);
+    sections.push(`**Composite: ${rec.composite.toFixed(3)}**`);
+    sections.push(``);
+    sections.push(`### Generated code`);
+    sections.push(``);
+    sections.push(`\`\`\`typescript`);
+    sections.push(rec.generatedCode || "(empty)");
+    sections.push(`\`\`\``);
+    sections.push(``);
+    sections.push(`### Scores`);
+    sections.push(``);
+    sections.push(`**TSC ${rec.scores.tsc.toFixed(1)} ${tscIcon}**`);
+    if (rec.diagnostics.tsc) {
+      sections.push(`\`\`\``);
+      sections.push(rec.diagnostics.tsc.trim());
+      sections.push(`\`\`\``);
+    }
+    sections.push(``);
+    sections.push(`**ESLint ${rec.scores.eslint.toFixed(1)} ${eslintIcon}**`);
+    if (rec.diagnostics.eslint) {
+      sections.push(`\`\`\``);
+      sections.push(rec.diagnostics.eslint.trim());
+      sections.push(`\`\`\``);
+    }
+    sections.push(``);
+    sections.push(`**Tests ${rec.scores.tests.toFixed(1)} ${testsIcon}**`);
+    if (rec.diagnostics.tests) {
+      sections.push(`\`\`\``);
+      sections.push(rec.diagnostics.tests.trim());
+      sections.push(`\`\`\``);
+    }
+    sections.push(``);
+  }
+
+  return sections.join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // Scorer functions
 // ---------------------------------------------------------------------------
 
-export async function runTscCheck(filePath: string): Promise<boolean> {
+export async function runTscCheck(filePath: string): Promise<ScorerResult> {
   const checkDir = join(tmpdir(), `coder-tsc-${String(Date.now())}`);
   mkdirSync(checkDir, { recursive: true });
 
@@ -174,19 +249,25 @@ export async function runTscCheck(filePath: string): Promise<boolean> {
 
   const proc = Bun.spawn(
     ["bunx", "tsc", "--project", join(checkDir, "tsconfig.json")],
-    { stdout: "ignore", stderr: "ignore" },
+    { stdout: "pipe", stderr: "pipe" },
   );
-  const exitCode = await proc.exited;
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
 
   try { rmSync(checkDir, { recursive: true }); } catch { /* best-effort */ }
 
-  return exitCode === 0;
+  const output = (stdout + stderr).trim()
+    .replace(/\/[^\s:]+coder-tsc-\d+\//g, "");  // strip temp dir paths
+  return { pass: exitCode === 0, output };
 }
 
 export async function runEslintCheck(
   filePath: string,
   eslintConfig?: string,
-): Promise<boolean> {
+): Promise<ScorerResult> {
   // ESLint v9 flat config treats files outside the project root as ignored.
   // Copy the file into a project-local temp dir so the base path includes it.
   const projectRoot = process.cwd();
@@ -216,28 +297,39 @@ export async function runEslintCheck(
   args.push(lintFile);
 
   const proc = Bun.spawn(args, {
-    stdout: "ignore",
-    stderr: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
     cwd: projectRoot,
   });
-  const exitCode = await proc.exited;
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
 
   try { rmSync(lintFile); } catch { /* best-effort */ }
 
-  return exitCode === 0;
+  const output = (stdout + stderr).trim()
+    .replace(/\S+coder-eval-tmp\/eval-\d+\.ts/g, "eval.ts");  // normalise temp path
+  return { pass: exitCode === 0, output };
 }
 
 export async function runTestsCheck(
   evalSuiteFile: string,
   generatedFilePath: string,
-): Promise<boolean> {
+): Promise<ScorerResult> {
   const proc = Bun.spawn(["bun", "test", evalSuiteFile], {
-    stdout: "ignore",
-    stderr: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
     env: { ...process.env, CODER_EVAL_OUTPUT: generatedFilePath },
   });
-  const exitCode = await proc.exited;
-  return exitCode === 0;
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  const output = (stdout + stderr).trim();
+  return { pass: exitCode === 0, output };
 }
 
 // ---------------------------------------------------------------------------
@@ -300,6 +392,8 @@ export async function runEval(
       prompt: r.prompt,
       scores: { tsc: 0.5, eslint: 0.5, tests: 0.5 },
       composite: 0.5,
+      generatedCode: `# dry-run: ${r.prompt}`,
+      diagnostics: { tsc: "", eslint: "", tests: "" },
     }));
     return {
       records: dryRecords,
@@ -327,18 +421,20 @@ export async function runEval(
       adaptor: opts.adaptorPath,
     });
 
+    const generatedCode = cleanGeneratedOutput(generatedText);
+
     const tempFile = join(
       tmpdir(),
       `coder-eval-${String(Date.now())}.ts`,
     );
-    writeFileSync(tempFile, cleanGeneratedOutput(generatedText));
+    writeFileSync(tempFile, generatedCode);
 
-    const [tscPass, eslintPass, testsPass] = await Promise.all([
+    const [tscResult, eslintResult, testsResult] = await Promise.all([
       runTscCheck(tempFile),
       runEslintCheck(tempFile, eslintConfigPath),
       existsSync(evalSuiteFile)
         ? runTestsCheck(evalSuiteFile, tempFile)
-        : Promise.resolve(false),
+        : Promise.resolve<ScorerResult>({ pass: false, output: "no eval suite found" }),
     ]);
 
     // clean up temp file
@@ -350,15 +446,21 @@ export async function runEval(
     }
 
     const scores: DimensionScores = {
-      tsc: tscPass ? 1 : 0,
-      eslint: eslintPass ? 1 : 0,
-      tests: testsPass ? 1 : 0,
+      tsc: tscResult.pass ? 1 : 0,
+      eslint: eslintResult.pass ? 1 : 0,
+      tests: testsResult.pass ? 1 : 0,
     };
 
     evalRecords.push({
       prompt: record.prompt,
       scores,
       composite: computeComposite(scores),
+      generatedCode,
+      diagnostics: {
+        tsc: tscResult.output,
+        eslint: eslintResult.output,
+        tests: testsResult.output,
+      },
     });
   }
 

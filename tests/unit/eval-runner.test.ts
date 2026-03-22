@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import {
   computeComposite,
   formatEvalTable,
+  formatEvalReport,
   runEval,
   updateManifestScore,
   runTscCheck,
@@ -79,21 +80,23 @@ describe("cleanGeneratedOutput", () => {
 // ---------------------------------------------------------------------------
 
 describe("runTscCheck", () => {
-  test("returns true for syntactically valid TypeScript", async () => {
+  test("returns pass:true for syntactically valid TypeScript", async () => {
     const file = join(tempDir, "valid.ts");
     writeFileSync(file, "const x: number = 1;\nexport {};\n");
     const result = await runTscCheck(file);
-    expect(result).toBe(true);
+    expect(result.pass).toBe(true);
+    expect(result.output).toBe("");
   });
 
-  test("returns false for TypeScript with a type error", async () => {
+  test("returns pass:false and output for TypeScript with a type error", async () => {
     const file = join(tempDir, "invalid.ts");
     writeFileSync(file, "const x: number = 'not a number';\nexport {};\n");
     const result = await runTscCheck(file);
-    expect(result).toBe(false);
+    expect(result.pass).toBe(false);
+    expect(result.output).toContain("error TS");
   });
 
-  test("returns true for valid React component with unresolved imports", async () => {
+  test("returns pass:true for valid React component with unresolved imports", async () => {
     const file = join(tempDir, "Button.tsx");
     writeFileSync(file, [
       "import React from 'react';",
@@ -102,7 +105,7 @@ describe("runTscCheck", () => {
       "export const MyButton: React.FC<Props> = ({ label }) => <Button>{label}</Button>;",
     ].join("\n") + "\n");
     const result = await runTscCheck(file);
-    expect(result).toBe(true);
+    expect(result.pass).toBe(true);
   });
 });
 
@@ -111,19 +114,20 @@ describe("runTscCheck", () => {
 // ---------------------------------------------------------------------------
 
 describe("runEslintCheck", () => {
-  test("returns true for a clean file using project config", async () => {
+  test("returns pass:true for a clean file using project config", async () => {
     const file = join(tempDir, "clean.ts");
     writeFileSync(file, "export const x = 1;\n");
     const result = await runEslintCheck(file);
-    expect(result).toBe(true);
+    expect(result.pass).toBe(true);
   });
 
-  test("returns false for a file with eslint errors", async () => {
+  test("returns pass:false and output for a file with eslint errors", async () => {
     const file = join(tempDir, "dirty.ts");
     // 'any' type is banned by the project eslint config
     writeFileSync(file, "export const x: any = 1;\n");
     const result = await runEslintCheck(file);
-    expect(result).toBe(false);
+    expect(result.pass).toBe(false);
+    expect(result.output).toContain("any");
   });
 });
 
@@ -161,27 +165,32 @@ describe("computeComposite", () => {
 // formatEvalTable
 // ---------------------------------------------------------------------------
 
+function makeSummary(): EvalSummary {
+  return {
+    records: [
+      {
+        prompt: "write a debounce function",
+        scores: { tsc: 1, eslint: 1, tests: 1 },
+        composite: 1.0,
+        generatedCode: "export function debounce() {}",
+        diagnostics: { tsc: "", eslint: "", tests: "" },
+      },
+      {
+        prompt: "write a throttle function",
+        scores: { tsc: 0, eslint: 1, tests: 0 },
+        composite: 0.3,
+        generatedCode: "export const throttle: any = () => {}",
+        diagnostics: { tsc: "error TS2345: Type mismatch", eslint: "", tests: "expected true" },
+      },
+    ],
+    meanTsc: 0.5,
+    meanEslint: 1.0,
+    meanTests: 0.5,
+    meanComposite: 0.65,
+  };
+}
+
 describe("formatEvalTable", () => {
-  function makeSummary(): EvalSummary {
-    return {
-      records: [
-        {
-          prompt: "write a debounce function",
-          scores: { tsc: 1, eslint: 1, tests: 1 },
-          composite: 1.0,
-        },
-        {
-          prompt: "write a throttle function",
-          scores: { tsc: 0, eslint: 1, tests: 0 },
-          composite: 0.3,
-        },
-      ],
-      meanTsc: 0.5,
-      meanEslint: 1.0,
-      meanTests: 0.5,
-      meanComposite: 0.65,
-    };
-  }
 
   test("contains header columns", () => {
     const table = formatEvalTable(makeSummary());
@@ -208,6 +217,8 @@ describe("formatEvalTable", () => {
           prompt: "a".repeat(60),
           scores: { tsc: 1, eslint: 1, tests: 1 },
           composite: 1.0,
+          generatedCode: "export const x = 1;",
+          diagnostics: { tsc: "", eslint: "", tests: "" },
         },
       ],
       meanTsc: 1,
@@ -218,6 +229,51 @@ describe("formatEvalTable", () => {
     const table = formatEvalTable(summary);
     expect(table).not.toContain("a".repeat(60));
     expect(table).toContain("a".repeat(40));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatEvalReport
+// ---------------------------------------------------------------------------
+
+describe("formatEvalReport", () => {
+  test("contains prompt text", () => {
+    const report = formatEvalReport(makeSummary());
+    expect(report).toContain("write a debounce function");
+    expect(report).toContain("write a throttle function");
+  });
+
+  test("contains generated code", () => {
+    const report = formatEvalReport(makeSummary());
+    expect(report).toContain("export function debounce");
+    expect(report).toContain("export const throttle");
+  });
+
+  test("contains pass/fail icons", () => {
+    const report = formatEvalReport(makeSummary());
+    expect(report).toContain("✓");
+    expect(report).toContain("✗");
+  });
+
+  test("contains diagnostic output when scorer failed", () => {
+    const report = formatEvalReport(makeSummary());
+    expect(report).toContain("error TS2345");
+    expect(report).toContain("expected true");
+  });
+
+  test("does not include empty diagnostic blocks", () => {
+    const summary = makeSummary();
+    // First record has all empty diagnostics and all passing
+    const report = formatEvalReport(summary);
+    // The passing record's tsc block should not have a code fence with nothing in it
+    expect(report).not.toMatch(/TSC 1\.0 ✓\s*```\s*```/);
+  });
+
+  test("summary table appears at top", () => {
+    const report = formatEvalReport(makeSummary());
+    const compositeIdx = report.indexOf("Composite");
+    const firstPromptIdx = report.indexOf("write a debounce");
+    expect(compositeIdx).toBeLessThan(firstPromptIdx);
   });
 });
 

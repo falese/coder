@@ -4,7 +4,7 @@ path = "~/.coder/models/mlx-community/Qwen2.5-Coder-7B-Instruct-4bit"
 [lora]
 rank = 8
 target_modules = ["q_proj", "v_proj"]
-iters = 100
+iters = 200
 batch_size = 2
 learning_rate = 1e-4
 grad_checkpoint = true

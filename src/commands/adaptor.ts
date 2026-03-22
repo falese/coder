@@ -9,10 +9,10 @@ import {
 } from "../adaptors/manager.js";
 import { loadTrainConfig } from "../training/config.js";
 import { runMlxTrain } from "../training/runner.js";
-import { runEval, formatEvalTable, updateManifestScore } from "../eval/runner.js";
+import { runEval, formatEvalTable, formatEvalReport, updateManifestScore } from "../eval/runner.js";
 import { logger } from "../observability/logger.js";
 import { join } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 
 function getAdaptorsDir(): string {
   return loadConfig().adaptors_dir;
@@ -146,10 +146,12 @@ export function createAdaptorCommand(): Command {
     .option("--model <path>", "Model path (defaults to config default_model)")
     .option("--input <file>", "Override eval JSONL (default: <adaptor>/data/eval.jsonl)")
     .option("--baseline", "Write score to baseline_pass_rate instead of eval_pass_rate")
+    .option("--verbose", "Print generated code and scorer diagnostics to terminal")
+    .option("--report <file>", "Write detailed markdown report to file")
     .action(
       async (
         name: string,
-        options: { model?: string; input?: string; baseline?: boolean },
+        options: { model?: string; input?: string; baseline?: boolean; verbose?: boolean; report?: string },
       ) => {
         const dryRun = process.env.CODER_DRY_RUN === "1";
         const config = loadConfig();
@@ -182,6 +184,15 @@ export function createAdaptorCommand(): Command {
           });
 
           process.stdout.write(formatEvalTable(summary) + "\n");
+
+          if (options.verbose === true) {
+            process.stdout.write("\n" + formatEvalReport(summary) + "\n");
+          }
+
+          if (options.report) {
+            writeFileSync(options.report, formatEvalReport(summary));
+            process.stdout.write(`Report written to ${options.report}\n`);
+          }
 
           const manifestPath = join(adaptorDir, "manifest.json");
           updateManifestScore(manifestPath, summary.meanComposite, options.baseline ?? false);

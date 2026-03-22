@@ -35,9 +35,15 @@ function makeMockProcess(stdout: string, stderr: string, exitCode: number) {
 // parseMlxOutput — pure function, zero mocks
 // ---------------------------------------------------------------------------
 
+// Old mlx_lm format: Prompt echo in generated section, tokens/sec in footer
 const SAMPLE_OUTPUT =
   `==========\nPrompt: hello world\ngenerated code here\n==========\n` +
   `Prompt: 5 tokens, Generation: 100.5 tokens/sec\n`;
+
+// New mlx_lm format: no Prompt echo, tokens-per-sec in footer
+const NEW_FORMAT_OUTPUT =
+  `==========\nconst x = 1;\n==========\n` +
+  `Prompt: 10 tokens, 67.381 tokens-per-sec\nGeneration: 5 tokens, 26.200 tokens-per-sec\n`;
 
 describe("parseMlxOutput", () => {
   test("extracts generated text", () => {
@@ -61,6 +67,25 @@ describe("parseMlxOutput", () => {
     const empty = `==========\nPrompt: hello\n\n==========\n`;
     const result = parseMlxOutput(empty);
     expect(result.generatedText).toBe("");
+  });
+
+  test("new format: extracts generated text without prompt echo", () => {
+    const result = parseMlxOutput(NEW_FORMAT_OUTPUT);
+    expect(result.generatedText).toBe("const x = 1;");
+  });
+
+  test("new format: extracts tokens-per-sec from Generation line", () => {
+    const result = parseMlxOutput(NEW_FORMAT_OUTPUT);
+    expect(result.tokensPerSecond).toBeCloseTo(26.2);
+  });
+
+  test("new format: multiline generated text", () => {
+    const multi =
+      `==========\nfunction Button({\n  children,\n  ...props\n})\n==========\n` +
+      `Prompt: 10 tokens, 67.0 tokens-per-sec\nGeneration: 20 tokens, 25.0 tokens-per-sec\n`;
+    const result = parseMlxOutput(multi);
+    expect(result.generatedText).toBe("function Button({\n  children,\n  ...props\n})");
+    expect(result.tokensPerSecond).toBeCloseTo(25.0);
   });
 });
 

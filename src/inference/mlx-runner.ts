@@ -38,12 +38,19 @@ export function markPreflightDoneForTest(): void {
 /**
  * Parse raw stdout from `mlx_lm.generate`.
  *
- * Expected format:
+ * Older mlx_lm format:
  *   ==========
  *   Prompt: <echo>
  *   <generated text>
  *   ==========
  *   Prompt: N tokens, Generation: M tokens/sec
+ *
+ * Newer mlx_lm format (no prompt echo in generated section):
+ *   ==========
+ *   <generated text>
+ *   ==========
+ *   Prompt: N tokens, M tokens-per-sec
+ *   Generation: N tokens, M tokens-per-sec
  */
 export function parseMlxOutput(raw: string): GenerateResult {
   const parts = raw.split("==========");
@@ -52,18 +59,23 @@ export function parseMlxOutput(raw: string): GenerateResult {
     return { generatedText: raw.trim() };
   }
 
-  // parts[1] = "\nPrompt: <echo>\n<generated text>\n"
+  // parts[1] contains the generated text section.
+  // Older mlx_lm: "\nPrompt: <echo>\n<text>\n" — skip the echo line
+  // Newer mlx_lm: "\n<text>\n"               — no echo, start from line 1
   const lines = parts[1].split("\n");
-  // lines[0] = "" (leading newline), lines[1] = "Prompt: ...", rest = text
-  const textLines = lines.slice(2, -1);
+  // lines[0] is always "" (leading newline after ==========)
+  const startLine = lines[1]?.startsWith("Prompt: ") ? 2 : 1;
+  const textLines = lines.slice(startLine, -1);
   const generatedText = textLines.join("\n");
 
   let tokensPerSecond: number | undefined;
   if (parts.length >= 3 && parts[2].trim()) {
-    const match = parts[2].match(/Generation:\s*([\d.]+)\s*tokens\/sec/);
-    if (match) {
-      tokensPerSecond = parseFloat(match[1]);
-    }
+    // Newer: "Generation: N tokens, M.M tokens-per-sec"
+    // Older: "Prompt: N tokens, Generation: M.M tokens/sec"
+    const match =
+      parts[2].match(/Generation:\s*\d+\s*tokens,\s*([\d.]+)\s*tokens-per-sec/) ??
+      parts[2].match(/Generation:\s*([\d.]+)\s*tokens\/sec/);
+    if (match) tokensPerSecond = parseFloat(match[1]);
   }
 
   return { generatedText, tokensPerSecond };
