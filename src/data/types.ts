@@ -6,8 +6,8 @@ export interface JsonlRecord {
 }
 
 export const ExtractRuleSchema = z.object({
-  prompt: z.enum(["jsdoc", "line_comment"]),
-  completion: z.enum(["next_function", "next_block"]),
+  prompt: z.enum(["jsdoc", "line_comment", "ts_declare"]),
+  completion: z.enum(["next_function", "next_block", "declare_body", "constructor_call"]),
 });
 
 export const ExtractConfigSchema = z.object({

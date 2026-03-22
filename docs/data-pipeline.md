@@ -84,6 +84,26 @@ if (!user.email || !user.name || !user.role) {
 }
 ```
 
+**TypeScript remote type contract → declare body** (`ts_declare` → `declare_body` rule):
+
+```typescript
+declare module 'remote/Button' {
+  export const Button: React.FC<ButtonProps>;
+  export const IconButton: React.FC<IconButtonProps>;
+}
+```
+
+**JSDoc → constructor call** (`jsdoc` → `constructor_call` rule, useful for webpack plugin configs):
+
+```typescript
+/** Configure Module Federation shell */
+new ModuleFederationPlugin({
+  name: 'shell',
+  remotes: { ui: `ui@${process.env.UI_URL}/remoteEntry.js` },
+  shared: { react: { singleton: true, requiredVersion: '^18.0.0' } },
+});
+```
+
 **Tips:**
 - Every exported function should have a JSDoc comment describing what it does (not how)
 - Use line comments before complex conditional blocks to explain intent
@@ -123,12 +143,19 @@ Each adaptor pack requires an `extract.json` at its root. This file defines the 
 }
 ```
 
-**Rule semantics:**
-- Rules are applied in order — the first rule that produces a match wins for a given anchor
+**Prompt anchor types:**
 - `jsdoc`: matches `/** ... */` blocks only (not `/* */` or `//`)
 - `line_comment`: matches one or more consecutive `// ...` lines
+- `ts_declare`: matches `declare module '...'` header lines — for TypeScript remote type contracts (MFE pattern)
+
+**Completion anchor types:**
 - `next_function`: captures the next `function`, `const x = () =>`, or `async function` with its full body
 - `next_block`: captures the next `{ ... }` block (useful for conditionals, loops, object literals)
+- `declare_body`: captures the `{ ... }` body of a `declare module` block (use with `ts_declare` prompt)
+- `constructor_call`: captures the next `new ClassName({...})` expression (use for webpack plugin configs)
+
+**General rules:**
+- Rules are applied in order — the first rule that produces a match wins for a given anchor
 - Anchors with no matching completion are silently skipped
 
 **Ordering advice:**
@@ -220,7 +247,7 @@ coder data split deduped.jsonl --train-ratio 0.8 --seed 42
 
 - Default ratio: 90% train / 10% eval
 - Default seed: 42 (Fisher-Yates shuffle — reproducible)
-- Output: `<basename>.train.jsonl` and `<basename>.eval.jsonl`
+- Output: `train.jsonl` and `valid.jsonl` in `--output-dir` (`mlx_lm.lora` requires `valid.jsonl`)
 - `--output-dir`: directory for output files (defaults to same directory as input)
 
 ### `coder data stats <file>`
@@ -243,29 +270,47 @@ Duplicate rate:  1.1%
 
 ## Full example: preparing the react-ts adaptor dataset
 
+This example curates training data from the MUI and Module Federation open-source repos and trains the `react-ts` adaptor.
+
 ```bash
-# 1. Install the react-ts adaptor (which includes extract.json)
-coder adaptor install react-ts --from-git https://github.com/your-org/react-ts-adaptor
+# 0. Prerequisites
+coder models pull mlx-community/Qwen2.5-Coder-7B-Instruct-4bit
+coder adaptor install react-ts --from-git file://$(pwd)/adaptors/react-ts
 
-# 2. Ingest your TypeScript codebase
-coder data ingest "src/**/*.{ts,tsx}" --output ~/tmp/raw.jsonl
+# 1. Clone source repos (~600 MB combined, MIT licensed)
+git clone --depth=1 https://github.com/mui/material-ui /tmp/mui
+git clone --depth=1 https://github.com/module-federation/core /tmp/mfe
 
-# 3. Extract training pairs using the adaptor's rules
-coder data extract --adaptor react-ts --input ~/tmp/raw.jsonl --output ~/tmp/extracted.jsonl
+# 2. Ingest source files
+coder data ingest "/tmp/mui/packages/mui-material/src/**/*.tsx" --output /tmp/mui-raw.jsonl
+coder data ingest "/tmp/mfe/packages/*/src/**/*.ts" --output /tmp/mfe-raw.jsonl
 
-# 4. Remove near-duplicates
-coder data deduplicate ~/tmp/extracted.jsonl --output ~/tmp/deduped.jsonl
+# 3. Extract prompt/completion pairs using the adaptor's extract.json rules
+coder data extract --adaptor react-ts --input /tmp/mui-raw.jsonl --output /tmp/mui-extracted.jsonl
+coder data extract --adaptor react-ts --input /tmp/mfe-raw.jsonl --output /tmp/mfe-extracted.jsonl
 
-# 5. Validate (fix any issues before proceeding)
-coder data validate ~/tmp/deduped.jsonl
+# 4. Combine sources
+cat /tmp/mui-extracted.jsonl /tmp/mfe-extracted.jsonl > /tmp/combined.jsonl
 
-# 6. Split into train/eval and place in the adaptor's data directory
-coder data split ~/tmp/deduped.jsonl \
+# 5. Remove near-duplicates
+coder data deduplicate /tmp/combined.jsonl --output /tmp/deduped.jsonl
+
+# 6. Validate quality gates
+coder data validate /tmp/deduped.jsonl
+
+# 7. Split into train/valid (mlx_lm.lora requires valid.jsonl)
+coder data split /tmp/deduped.jsonl \
   --output-dir ~/.coder/adaptors/react-ts/data/
 
-# 7. Review stats
-coder data stats ~/tmp/deduped.jsonl
+# 8. Review stats before training
+coder data stats /tmp/deduped.jsonl
 
-# 8. Ready to train
-coder adaptor train react-ts
+# 9. Establish baseline (base model, no adaptor)
+coder adaptor eval react-ts --baseline
+
+# 10. Train (~30–60 min on M3, grad_checkpoint keeps memory under 18 GB)
+coder adaptor train --config ~/.coder/adaptors/react-ts/train-config.toml
+
+# 11. Evaluate with adaptor — target lift ≥ 0.15
+coder adaptor eval react-ts
 ```

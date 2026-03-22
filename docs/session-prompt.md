@@ -15,13 +15,18 @@
 
 ---
 
-## Session: [DATE]
+## Session: 2026-03-22
 
 ### Active issue
 
-**[#9](https://github.com/falese/coder/issues/9) — Adaptor eval: quality scoring harness**
+**[#11](https://github.com/falese/coder/issues/11) — react-ts adaptor pack: first domain adaptor**
 
-Build the full eval command in one session. All design decisions are resolved below — do not reopen.
+Build the react-ts adaptor pack end-to-end:
+1. Extend `coder data extract` with missing anchors (`ts_declare`, `constructor_call`) needed for MFE/MUI patterns
+2. Curate training data from MUI and Module Federation source repos
+3. Run training with `coder adaptor train`
+4. Write eval suite (`evals/eval_suite.ts`)
+5. Establish baseline (`coder adaptor eval react-ts --baseline`) then measure lift
 
 ### TDD instructions
 
@@ -39,102 +44,129 @@ Do not move to the next behaviour until the current test passes.
 
 ## Spec context
 
-### Commands
+### Adaptor pack structure
 
 ```
-coder adaptor eval <name>                # score with adaptor
-coder adaptor eval <name> --baseline     # score base model only — no adaptor
-coder adaptor eval <name> --input <file> # score a specific file
+~/.coder/adaptors/react-ts/
+├── weights/
+│   └── adaptor.safetensors
+├── data/
+│   ├── train.jsonl
+│   └── valid.jsonl           ← mlx_lm lora requires valid.jsonl (NOT eval.jsonl)
+├── evals/
+│   ├── eval_suite.ts
+│   └── .eslintrc.json        ← optional; falls back to project default
+├── prompts/
+│   └── system.md
+├── extract.json
+└── manifest.json
 ```
 
-`--baseline` is critical — it establishes `baseline_pass_rate` in `manifest.json` before training, so lift can be measured.
+### manifest.json schema (current Zod shape in src/adaptors/types.ts)
 
-### Scoring dimensions
-
-Embedding similarity is **dropped from v1**. Do not implement it.
-
-| Dimension | Weight | Implementation |
-|---|---|---|
-| TypeScript type correctness | 0.35 | `tsc --noEmit --strict <file>` |
-| ESLint compliance | 0.30 | `eslint --format json <file>` |
-| Test pass rate | 0.35 | `bun test evals/eval_suite.ts` with `CODER_EVAL_OUTPUT` set |
-
-Composite = `0.35×tsc + 0.30×eslint + 0.35×tests`
-
-### Eval injection format
-
-For each eval record, the CLI:
-1. Generates output: `coder generate "<prompt>" [--adaptor <name>]`
-2. Writes output to a temp `.ts` file in OS temp dir
-3. Sets `CODER_EVAL_OUTPUT=<tempfile>`
-4. Runs `bun test evals/eval_suite.ts`
-5. Parses pass/fail count from bun output
-6. Deletes temp file (always — use try/finally)
-
-Adaptor authors write their eval suite like this:
-```typescript
-const generatedPath = process.env.CODER_EVAL_OUTPUT;
-if (!generatedPath) throw new Error("CODER_EVAL_OUTPUT not set");
-const { default: generated } = await import(generatedPath);
-// assertions against `generated` follow
+```json
+{
+  "name": "react-ts",
+  "version": "1.0.0",
+  "domain": "frontend",
+  "base_model": "Qwen2.5-Coder-7B",
+  "mlx_quant": "4bit",
+  "lora_rank": 8,
+  "min_memory_gb": 18,
+  "eval_pass_rate": 0.0,
+  "baseline_pass_rate": 0.0,
+  "author": "",
+  "description": "React TypeScript + MUI + Module Federation patterns"
+}
 ```
 
-### Scorer implementations
+### extract.json anchors — what is and isn't implemented
 
-**tsc scorer** (`src/eval/tsc.ts`):
-- Spawn `tsc --noEmit --strict <tempfile>`
-- Exit 0 = 1.0, non-zero = 0.0
-- Aggregate: mean across all eval records
+**Already implemented** in `src/data/extract.ts`:
+- `jsdoc` → `next_function`
+- `line_comment` → `next_function`, `next_block`
 
-**ESLint scorer** (`src/eval/eslint.ts`):
-- Spawn `eslint --format json <tempfile>`
-- Use adaptor's `evals/.eslintrc.json` if present, else project default
-- Score per record = `1 - (errorCount / (errorCount + warningCount + 1))`
-- Aggregate: mean across all eval records
+**NOT YET implemented** (needed for MFE/MUI patterns):
+- `ts_declare` → `declare_body`   (for MFE remote type contracts)
+- `jsdoc` → `constructor_call`   (for `new ModuleFederationPlugin({...})` patterns)
 
-**Test pass rate scorer** (`src/eval/tests.ts`):
-- Set `CODER_EVAL_OUTPUT`, spawn `bun test evals/eval_suite.ts`
-- Parse bun test output: `N pass` / `M fail`
-- Score per record = `passCount / (passCount + failCount)`
-- Aggregate: mean across all eval records
+These two anchors must be added to `src/data/extract.ts` with tests in `tests/unit/data-extract.test.ts` **before** running data extraction.
 
-**Composite** (`src/eval/composite.ts`):
-- `0.35×tsc + 0.30×eslint + 0.35×tests`
+### `ts_declare` anchor
 
-### manifest.json schema update
-
-Add `baseline_pass_rate` to the Zod schema in `src/adaptors/types.ts`:
+Matches TypeScript `declare module '...' {` or `declare module "..." {` header lines, capturing the header as prompt and the body (everything inside the braces) as completion.
 
 ```typescript
-baseline_pass_rate: z.number().min(0).max(1).default(0),
-eval_pass_rate: z.number().min(0).max(1).default(0),
+// prompt anchor: declare module 'remote/Button' {
+// completion anchor: everything inside the module block
+declare module 'remote/Button' {
+  export const Button: React.FC<ButtonProps>;
+}
 ```
 
-`--baseline` writes `baseline_pass_rate`. Normal eval writes `eval_pass_rate`.
+### `constructor_call` anchor
 
-### Output format
+Matches `new ClassName({...})` expressions following a jsdoc comment. Used for Module Federation plugin config blocks.
 
-```
-Eval: react-ts (with adaptor)
-────────────────────────────────────────────
-Record   tsc    eslint  tests  composite
-1        1.00   0.85    0.80   0.88
-2        0.00   0.70    0.60   0.43
-────────────────────────────────────────────
-Mean     0.72   0.81    0.74   0.76
-────────────────────────────────────────────
-eval_pass_rate: 0.76 written to manifest.json
+```typescript
+/** Exposes Button component */
+new ModuleFederationPlugin({
+  name: "shell",
+  remotes: { ui: "ui@http://localhost:3001/remoteEntry.js" },
+  shared: { react: { singleton: true } },
+});
 ```
 
-### Architecture
+### Data sources for react-ts adaptor
 
-- `src/eval/tsc.ts` — tsc scorer
-- `src/eval/eslint.ts` — eslint scorer
-- `src/eval/tests.ts` — bun test scorer
-- `src/eval/composite.ts` — aggregation + composite calculation
-- `src/commands/adaptor.ts` — add `eval` subcommand (already has list/install/info/update/remove)
-- No `console.log` — use `logger` from `src/observability/logger.ts`
-- `CODER_DRY_RUN=1` — skip generation and subprocess spawns, return mock scores of 0.5 for all dimensions
+- **MUI**: `https://github.com/mui/material-ui` — components in `packages/mui-material/src/`; focus on `.tsx` files with JSDoc comments
+- **Module Federation**: `https://github.com/module-federation/core` — examples in `packages/*/src/`; focus on webpack plugin configs and remote type declarations
+
+Extraction rules for `extract.json`:
+```json
+{
+  "rules": [
+    { "prompt": "jsdoc", "completion": "next_function" },
+    { "prompt": "jsdoc", "completion": "constructor_call" },
+    { "prompt": "ts_declare", "completion": "declare_body" },
+    { "prompt": "line_comment", "completion": "next_function" }
+  ]
+}
+```
+
+### Training command
+
+```bash
+coder adaptor train --config ~/.coder/adaptors/react-ts/train-config.toml
+```
+
+`train-config.toml` contents:
+```toml
+adaptor_name = "react-ts"
+base_model = "~/.coder/models/Qwen2.5-Coder-7B-Instruct-4bit"
+data_dir = "~/.coder/adaptors/react-ts/data"
+output_dir = "~/.coder/adaptors/react-ts/weights"
+lora_rank = 8
+lora_target_modules = ["q_proj", "v_proj"]
+epochs = 5
+batch_size = 4
+learning_rate = 1e-4
+grad_checkpoint = true
+```
+
+`grad_checkpoint = true` is required to fit within 18GB on M3.
+
+### Eval scoring (already wired in coder adaptor eval)
+
+Composite = 0.4×tsc + 0.3×eslint + 0.3×tests
+
+Baseline: `coder adaptor eval react-ts --baseline` → writes `baseline_pass_rate`
+With adaptor: `coder adaptor eval react-ts` → writes `eval_pass_rate`
+Lift target: `eval_pass_rate - baseline_pass_rate >= 0.15`
+
+### Dry-run for eval development
+
+`CODER_DRY_RUN=1 coder adaptor eval react-ts` returns all scores = 0.5
 
 ---
 
@@ -161,6 +193,7 @@ eval_pass_rate: 0.76 written to manifest.json
 ./src/data/stats.ts
 ./src/data/types.ts
 ./src/data/validate.ts
+./src/eval/runner.ts
 ./src/inference/memory-gate.ts
 ./src/inference/mlx-runner.ts
 ./src/inference/types.ts
@@ -169,6 +202,8 @@ eval_pass_rate: 0.76 written to manifest.json
 ./src/models/types.ts
 ./src/observability/logger.ts
 ./src/observability/types.ts
+./src/training/config.ts
+./src/training/runner.ts
 ./tests/integration/adaptors.test.ts
 ./tests/integration/chat.test.ts
 ./tests/integration/config.test.ts
@@ -187,18 +222,21 @@ eval_pass_rate: 0.76 written to manifest.json
 ./tests/unit/data-stats.test.ts
 ./tests/unit/data-types.test.ts
 ./tests/unit/data-validate.test.ts
+./tests/unit/eval-runner.test.ts
 ./tests/unit/logger.test.ts
 ./tests/unit/memory-gate.test.ts
 ./tests/unit/mlx-runner.test.ts
 ./tests/unit/models-inspector.test.ts
 ./tests/unit/pull.test.ts
+./tests/unit/training-config.test.ts
+./tests/unit/training-runner.test.ts
 ```
 
 ---
 
 ## Existing tests (summary)
 
-213 tests passing across 23 files. Do not duplicate:
+271 tests passing across 26 files. Do not duplicate:
 
 - `runMlxBuffered`, `runMlxStream`, `checkPreflight` — mlx subprocess layer
 - `loadConfig` / `setConfigValue` / `getConfigValue` — config reads/writes
@@ -207,7 +245,10 @@ eval_pass_rate: 0.76 written to manifest.json
 - `AdaptorManager` — manifest validation (Zod), install, list, info, update, remove
 - `ChatHistory` — conversation history, ChatML formatting, sliding window
 - `data ingest/extract/deduplicate/validate/split/stats` — full data pipeline
+- `runEval`, `computeComposite`, `formatEvalTable`, scorers — eval harness unit tests
+- `loadTrainConfig`, `runMlxTrain` — training config + runner
 - `coder generate`, `coder chat`, `coder config`, `coder models`, `coder adaptor`, `coder data` integration
+- Existing extract anchors: `jsdoc` → `next_function`, `line_comment` → `next_function`/`next_block`
 
 ---
 
@@ -215,9 +256,9 @@ eval_pass_rate: 0.76 written to manifest.json
 
 All resolved — do not reopen.
 
-- **Embedding similarity:** dropped from v1. Composite = tsc + eslint + tests only. Weights: 0.35 / 0.30 / 0.35.
-- **`--baseline` flag:** same eval, no `--adaptor` passed to generation. Writes `baseline_pass_rate` not `eval_pass_rate`.
-- **Eval injection:** `CODER_EVAL_OUTPUT` env var pointing to temp file. Always cleaned up in try/finally.
-- **ESLint config:** use adaptor's `evals/.eslintrc.json` if present, else project default.
-- **Dry-run:** skip all subprocess spawns, return 0.5 for all dimensions.
-- **manifest.json:** `baseline_pass_rate` added to Zod schema alongside existing `eval_pass_rate`.
+- **New anchors needed:** `ts_declare` → `declare_body` and `jsdoc`/`line_comment` → `constructor_call` must be added before extraction can run on MFE source.
+- **Data sources:** MUI (`packages/mui-material/src/`) + Module Federation (`packages/*/src/`) — both MIT licensed.
+- **Combined adaptor:** single `react-ts` pack combining MUI + MFE patterns (confirmed).
+- **Lift threshold:** `eval_pass_rate - baseline_pass_rate >= 0.15` to consider adaptor successful.
+- **valid.jsonl:** `coder data split` outputs `*.valid.jsonl`, which is what `mlx_lm lora --data` requires.
+- **Memory during training:** `grad_checkpoint = true` in train config to stay within 18GB on M3.

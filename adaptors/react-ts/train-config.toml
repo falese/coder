@@ -1,0 +1,17 @@
+[model]
+path = "~/.coder/models/mlx-community/Qwen2.5-Coder-7B-Instruct-4bit"
+
+[lora]
+rank = 8
+target_modules = ["q_proj", "v_proj"]
+iters = 600
+batch_size = 4
+learning_rate = 1e-4
+
+[data]
+dir = "~/.coder/adaptors/react-ts/data"
+
+[output]
+adaptor_dir = "~/.coder/adaptors/react-ts/weights"
+manifest    = "~/.coder/adaptors/react-ts/manifest.json"
+log_file    = "~/.coder/adaptors/react-ts/training.log"
