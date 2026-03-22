@@ -22,6 +22,7 @@ import {
   updateManifestScore,
   runTscCheck,
   runEslintCheck,
+  cleanGeneratedOutput,
 } from "../../src/eval/runner.js";
 import { markPreflightDoneForTest } from "../../src/inference/mlx-runner.js";
 import type { EvalSummary } from "../../src/eval/runner.js";
@@ -36,6 +37,41 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(tempDir, { recursive: true, force: true });
   mock.restore();
+});
+
+// ---------------------------------------------------------------------------
+// cleanGeneratedOutput
+// ---------------------------------------------------------------------------
+
+describe("cleanGeneratedOutput", () => {
+  test("strips closing fence and prose after code", () => {
+    const input = [
+      "import React from 'react';",
+      "export const Foo = () => <div/>;",
+      "```",
+      "This is a wrapper component...<|im_end|>",
+    ].join("\n");
+    const result = cleanGeneratedOutput(input);
+    expect(result).toBe("import React from 'react';\nexport const Foo = () => <div/>;");
+  });
+
+  test("extracts code from fenced block when output starts with fence", () => {
+    const input = "```tsx\nexport const x = 1;\n```\nSome explanation.";
+    const result = cleanGeneratedOutput(input);
+    expect(result).toBe("export const x = 1;");
+  });
+
+  test("strips im_end token without fence", () => {
+    const input = "export const x = 1;\n<|im_end|>";
+    const result = cleanGeneratedOutput(input);
+    expect(result).toBe("export const x = 1;");
+  });
+
+  test("returns original when no fence or token present", () => {
+    const input = "export const x = 1;\n";
+    const result = cleanGeneratedOutput(input);
+    expect(result).toBe("export const x = 1;");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -80,6 +116,14 @@ describe("runEslintCheck", () => {
     writeFileSync(file, "export const x = 1;\n");
     const result = await runEslintCheck(file);
     expect(result).toBe(true);
+  });
+
+  test("returns false for a file with eslint errors", async () => {
+    const file = join(tempDir, "dirty.ts");
+    // 'any' type is banned by the project eslint config
+    writeFileSync(file, "export const x: any = 1;\n");
+    const result = await runEslintCheck(file);
+    expect(result).toBe(false);
   });
 });
 

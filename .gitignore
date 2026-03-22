@@ -208,3 +208,4 @@ __marimo__/
 
 # Node / Bun
 node_modules/
+.coder-eval-tmp/

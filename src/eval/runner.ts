@@ -43,6 +43,18 @@ interface JsonlRecord {
 // Pure functions
 // ---------------------------------------------------------------------------
 
+export function cleanGeneratedOutput(raw: string): string {
+  // If output starts with a fenced code block, extract its contents
+  const fencedMatch = /^```[^\n]*\n([\s\S]*?)```/.exec(raw);
+  if (fencedMatch) return fencedMatch[1].trimEnd();
+
+  // Otherwise truncate at the first closing fence or chat end token
+  const cutMatch = /^([\s\S]*?)(?:^```|<\|im_end\|>)/m.exec(raw);
+  if (cutMatch) return cutMatch[1].trimEnd();
+
+  return raw.trimEnd();
+}
+
 export function computeComposite(scores: DimensionScores): number {
   return scores.tsc * 0.4 + scores.eslint * 0.3 + scores.tests * 0.3;
 }
@@ -175,19 +187,43 @@ export async function runEslintCheck(
   filePath: string,
   eslintConfig?: string,
 ): Promise<boolean> {
-  const projectConfig = join(
-    new URL("../../..", import.meta.url).pathname,
-    "eslint.config.mjs",
-  );
-  const resolvedConfig =
-    eslintConfig ?? (existsSync(projectConfig) ? projectConfig : undefined);
+  // ESLint v9 flat config treats files outside the project root as ignored.
+  // Copy the file into a project-local temp dir so the base path includes it.
+  const projectRoot = process.cwd();
+  const lintDir = join(projectRoot, ".coder-eval-tmp");
+  mkdirSync(lintDir, { recursive: true });
+  const lintFile = join(lintDir, `eval-${String(Date.now())}.ts`);
+  writeFileSync(lintFile, readFileSync(filePath, "utf-8"));
 
-  const args = ["bunx", "eslint", filePath];
-  if (resolvedConfig !== undefined) {
-    args.push("--config", resolvedConfig);
+  // Write a minimal eval ESLint config if no adaptor config provided.
+  // Uses project node_modules so typescript-eslint is resolvable.
+  const evalEslintConfig = join(lintDir, "eslint.config.mjs");
+  if (!existsSync(evalEslintConfig)) {
+    writeFileSync(
+      evalEslintConfig,
+      [
+        'import tseslint from "typescript-eslint";',
+        "export default tseslint.config(",
+        "  ...tseslint.configs.recommended,",
+        ");",
+      ].join("\n") + "\n",
+    );
   }
-  const proc = Bun.spawn(args, { stdout: "ignore", stderr: "ignore" });
+
+  const args = ["bunx", "eslint", "--no-warn-ignored", "--config",
+    eslintConfig ?? evalEslintConfig,
+  ];
+  args.push(lintFile);
+
+  const proc = Bun.spawn(args, {
+    stdout: "ignore",
+    stderr: "ignore",
+    cwd: projectRoot,
+  });
   const exitCode = await proc.exited;
+
+  try { rmSync(lintFile); } catch { /* best-effort */ }
+
   return exitCode === 0;
 }
 
@@ -295,7 +331,7 @@ export async function runEval(
       tmpdir(),
       `coder-eval-${String(Date.now())}.ts`,
     );
-    writeFileSync(tempFile, generatedText);
+    writeFileSync(tempFile, cleanGeneratedOutput(generatedText));
 
     const [tscPass, eslintPass, testsPass] = await Promise.all([
       runTscCheck(tempFile),
