@@ -112,7 +112,9 @@ describe("buildTrainArgs", () => {
 
     expect(args).toContain("python3");
     expect(args).toContain("-m");
-    expect(args).toContain("mlx_lm.lora");
+    expect(args).toContain("mlx_lm");
+    expect(args).toContain("lora");
+    expect(args).not.toContain("mlx_lm.lora");
     expect(args).toContain("--train");
     expect(args).toContain("--model");
     expect(args).toContain("--data");
@@ -211,17 +213,18 @@ describe("runMlxTrain — dry-run", () => {
 });
 
 describe("runMlxTrain — real spawn (mocked)", () => {
-  test("spawns with correct args and streams stdout", async () => {
+  test("spawns with correct args and streams stderr for loss parsing", async () => {
     const config = makeConfig();
     mkdirSync(config.output.adaptor_dir, { recursive: true });
     mkdirSync(config.data.dir, { recursive: true });
 
-    const stdout =
+    // mlx_lm writes progress to stderr, not stdout
+    const stderr =
       "Loading model...\nIter 10: train loss 0.800\nIter 20: train loss 0.650\nDone\n";
 
     const mockProc = {
-      stdout: makeStream(stdout),
-      stderr: makeStream(""),
+      stdout: makeStream(""),
+      stderr: makeStream(stderr),
       exited: Promise.resolve(0),
     };
 
@@ -238,6 +241,32 @@ describe("runMlxTrain — real spawn (mocked)", () => {
     expect(stepEvents).toHaveLength(2);
     expect(stepEvents[0]).toMatchObject({ iter: 10, loss: 0.8 });
     expect(stepEvents[1]).toMatchObject({ iter: 20, loss: 0.65 });
+  });
+
+  test("emits training_step events to structured logger", async () => {
+    const config = makeConfig();
+    mkdirSync(config.output.adaptor_dir, { recursive: true });
+    mkdirSync(config.data.dir, { recursive: true });
+
+    const stderr = "Iter 10: train loss 0.800\nIter 20: train loss 0.650\n";
+    const mockProc = {
+      stdout: makeStream(""),
+      stderr: makeStream(stderr),
+      exited: Promise.resolve(0),
+    };
+    spyOn(Bun, "spawn").mockReturnValue(mockProc as ReturnType<typeof Bun.spawn>);
+
+    const { logger } = await import("../../src/observability/logger.js");
+    const logSpy = spyOn(logger, "logEvent");
+
+    await runMlxTrain(config, false);
+
+    const stepCalls = logSpy.mock.calls.filter(
+      (c) => (c[0] as { event: string }).event === "training_step",
+    );
+    expect(stepCalls).toHaveLength(2);
+    expect(stepCalls[0][0]).toMatchObject({ event: "training_step", iter: 10, loss: 0.8 });
+    expect(stepCalls[1][0]).toMatchObject({ event: "training_step", iter: 20, loss: 0.65 });
   });
 
   test("throws on non-zero exit code", async () => {

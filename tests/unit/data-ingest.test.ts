@@ -78,4 +78,13 @@ describe("ingestFiles", () => {
     expect(records).toHaveLength(1);
     expect(records[0].prompt).toBe("src/foo.ts");
   });
+
+  test("absolute glob pattern resolves correctly", () => {
+    mkdirSync(join(tempDir, "src"));
+    writeFileSync(join(tempDir, "src", "bar.ts"), "const bar = 2;");
+
+    const records = ingestFiles(join(tempDir, "src", "*.ts"));
+    expect(records).toHaveLength(1);
+    expect(records[0].completion).toBe("const bar = 2;");
+  });
 });

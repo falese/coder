@@ -1,5 +1,5 @@
 import { statSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, isAbsolute } from "node:path";
 import type { JsonlRecord } from "./types.js";
 
 const MAX_BYTES = 100 * 1024;
@@ -16,15 +16,25 @@ export function ingestFiles(
   pattern: string,
   baseDir: string = process.cwd(),
 ): JsonlRecord[] {
-  const glob = new Bun.Glob(pattern);
+  let scanDir = baseDir;
+  let scanPattern = pattern;
+
+  if (isAbsolute(pattern)) {
+    const firstGlob = pattern.search(/[*?[{]/);
+    const dirPart = firstGlob === -1 ? pattern : pattern.slice(0, pattern.lastIndexOf("/", firstGlob));
+    scanDir = dirPart || "/";
+    scanPattern = firstGlob === -1 ? "*" : pattern.slice(scanDir.length + 1);
+  }
+
+  const glob = new Bun.Glob(scanPattern);
   const files = Array.from(
-    glob.scanSync({ cwd: baseDir, onlyFiles: true }),
+    glob.scanSync({ cwd: scanDir, onlyFiles: true }),
   );
 
   const records: JsonlRecord[] = [];
 
   for (const file of files) {
-    const absPath = join(baseDir, file);
+    const absPath = join(scanDir, file);
     const stat = statSync(absPath);
     if (stat.size > MAX_BYTES) continue;
 

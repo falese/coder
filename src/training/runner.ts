@@ -31,7 +31,8 @@ export function buildTrainArgs(config: TrainConfig, yamlPath: string): string[] 
   const args = [
     "python3",
     "-m",
-    "mlx_lm.lora",
+    "mlx_lm",
+    "lora",
     "--train",
     "--model",
     config.model.path,
@@ -94,18 +95,20 @@ export async function runMlxTrain(
   const args = buildTrainArgs(config, yamlPath);
   const proc = Bun.spawn(args, { stdout: "pipe", stderr: "pipe" });
 
-  // Stream stdout line by line, parse loss events
-  const reader = proc.stdout.getReader();
+  // Stream stderr line by line — mlx_lm writes progress to stderr
+  const reader = proc.stderr.getReader();
   const decoder = new TextDecoder();
   let lineBuffer = "";
   let finalLoss: number | undefined;
+  let stderrOutput = "";
 
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    lineBuffer += decoder.decode(value);
+    const chunk = decoder.decode(value);
+    stderrOutput += chunk;
+    lineBuffer += chunk;
 
-    // Process complete lines
     const lines = lineBuffer.split("\n");
     lineBuffer = lines.pop() ?? "";
 
@@ -114,28 +117,26 @@ export async function runMlxTrain(
       const parsed = parseLossLine(line);
       if (parsed) {
         finalLoss = parsed.loss;
-        const entry = JSON.stringify({
+        const stepEvent = {
           ts: new Date().toISOString(),
           event: "training_step",
           iter: parsed.iter,
           loss: parsed.loss,
           model: config.model.path,
-        });
+        };
+        logger.logEvent(stepEvent);
         mkdirSync(
           config.output.log_file.includes("/")
             ? config.output.log_file.slice(0, config.output.log_file.lastIndexOf("/"))
             : ".",
           { recursive: true },
         );
-        appendFileSync(config.output.log_file, entry + "\n");
+        appendFileSync(config.output.log_file, JSON.stringify(stepEvent) + "\n");
       }
     }
   }
 
-  const [stderr, exitCode] = await Promise.all([
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
+  const exitCode = await proc.exited;
 
   // Clean up temp YAML
   try {
@@ -146,7 +147,7 @@ export async function runMlxTrain(
 
   if (exitCode !== 0) {
     throw new Error(
-      stderr.trim() || `Training process exited with code ${String(exitCode)}`,
+      stderrOutput.trim() || `Training process exited with code ${String(exitCode)}`,
     );
   }
 
