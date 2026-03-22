@@ -107,7 +107,7 @@ export async function runEslintCheck(
   filePath: string,
   eslintConfig?: string,
 ): Promise<boolean> {
-  const args = ["eslint", filePath];
+  const args = ["bunx", "eslint", filePath];
   if (eslintConfig !== undefined) {
     args.push("--config", eslintConfig);
   }
