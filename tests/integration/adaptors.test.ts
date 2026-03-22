@@ -264,7 +264,7 @@ log_file = "${dir}/training.log"
     writeFileSync(configPath, toml);
   }
 
-  test("dry-run exits 0 and writes stub adaptor.safetensors", async () => {
+  test("dry-run exits 0 and writes stub adapters.safetensors", async () => {
     const configPath = join(tempDir, "train.toml");
     writeTrainConfig(tempDir, configPath);
     mkdirSync(join(tempDir, "weights"), { recursive: true });
@@ -278,7 +278,7 @@ log_file = "${dir}/training.log"
 
     expect(exitCode).toBe(0);
     expect(stdout).toContain("Training complete.");
-    expect(existsSync(join(tempDir, "weights", "adaptor.safetensors"))).toBe(true);
+    expect(existsSync(join(tempDir, "weights", "adapters.safetensors"))).toBe(true);
   });
 
   test("exits 1 when --config flag is missing", async () => {

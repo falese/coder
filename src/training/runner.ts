@@ -16,7 +16,7 @@ import type { TrainConfig } from "./config.js";
 export function parseLossLine(
   line: string,
 ): { iter: number; loss: number } | null {
-  const m = /Iter\s+(\d+):\s+train loss\s+([\d.]+)/.exec(line);
+  const m = /Iter\s+(\d+):\s+[Tt]rain loss\s+([\d.]+)/.exec(line);
   if (!m) return null;
   return { iter: parseInt(m[1], 10), loss: parseFloat(m[2]) };
 }
@@ -52,7 +52,7 @@ export function buildTrainArgs(config: TrainConfig, yamlPath: string): string[] 
     yamlPath,
   ];
 
-  const checkpoint = join(config.output.adaptor_dir, "adaptor.safetensors");
+  const checkpoint = join(config.output.adaptor_dir, "adapters.safetensors");
   if (existsSync(checkpoint)) {
     args.push("--resume-adapter-file", checkpoint);
   }
@@ -75,7 +75,7 @@ export async function runMlxTrain(
   mkdirSync(config.output.adaptor_dir, { recursive: true });
 
   if (dryRun) {
-    const stub = join(config.output.adaptor_dir, "adaptor.safetensors");
+    const stub = join(config.output.adaptor_dir, "adapters.safetensors");
     writeFileSync(stub, "# dry-run stub\n");
     logger.logEvent({
       event: "training_complete",
@@ -95,18 +95,18 @@ export async function runMlxTrain(
   const args = buildTrainArgs(config, yamlPath);
   const proc = Bun.spawn(args, { stdout: "pipe", stderr: "pipe" });
 
-  // Stream stderr line by line — mlx_lm writes progress to stderr
-  const reader = proc.stderr.getReader();
+  // Stream stdout line by line — mlx_lm writes progress to stdout
+  const reader = proc.stdout.getReader();
   const decoder = new TextDecoder();
   let lineBuffer = "";
   let finalLoss: number | undefined;
-  let stderrOutput = "";
+  let stdoutOutput = "";
 
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
     const chunk = decoder.decode(value);
-    stderrOutput += chunk;
+    stdoutOutput += chunk;
     lineBuffer += chunk;
 
     const lines = lineBuffer.split("\n");
@@ -119,7 +119,7 @@ export async function runMlxTrain(
         finalLoss = parsed.loss;
         const stepEvent = {
           ts: new Date().toISOString(),
-          event: "training_step",
+          event: "training_step" as const,
           iter: parsed.iter,
           loss: parsed.loss,
           model: config.model.path,
@@ -147,7 +147,7 @@ export async function runMlxTrain(
 
   if (exitCode !== 0) {
     throw new Error(
-      stderrOutput.trim() || `Training process exited with code ${String(exitCode)}`,
+      stdoutOutput.trim() || `Training process exited with code ${String(exitCode)}`,
     );
   }
 

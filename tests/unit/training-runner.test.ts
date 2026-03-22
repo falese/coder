@@ -75,6 +75,13 @@ describe("parseLossLine", () => {
     expect(result).toEqual({ iter: 100, loss: 0.423 });
   });
 
+  test("parses mlx_lm capitalised output", () => {
+    const result = parseLossLine(
+      "Iter 10: Train loss 1.465, Learning Rate 1.000e-04, It/sec 0.056, Tokens/sec 40.745, Trained Tokens 7295, Peak mem 13.392 GB",
+    );
+    expect(result).toEqual({ iter: 10, loss: 1.465 });
+  });
+
   test("parses with variable whitespace", () => {
     const result = parseLossLine("Iter  50:  train loss  1.234");
     expect(result).toEqual({ iter: 50, loss: 1.234 });
@@ -134,14 +141,14 @@ describe("buildTrainArgs", () => {
     expect(args).not.toContain("--resume-adapter-file");
   });
 
-  test("includes --resume-adapter-file when adaptor.safetensors exists", () => {
+  test("includes --resume-adapter-file when adapters.safetensors exists", () => {
     const config = makeConfig();
     mkdirSync(config.output.adaptor_dir, { recursive: true });
-    writeFileSync(join(config.output.adaptor_dir, "adaptor.safetensors"), "stub");
+    writeFileSync(join(config.output.adaptor_dir, "adapters.safetensors"), "stub");
 
     const args = buildTrainArgs(config, "/tmp/lora.yaml");
     expect(args).toContain("--resume-adapter-file");
-    expect(args).toContain(join(config.output.adaptor_dir, "adaptor.safetensors"));
+    expect(args).toContain(join(config.output.adaptor_dir, "adapters.safetensors"));
   });
 
   test("passes correct values from config", () => {
@@ -199,7 +206,7 @@ describe("updateManifestVersion", () => {
 });
 
 describe("runMlxTrain — dry-run", () => {
-  test("dry-run writes stub adaptor.safetensors and exits without spawning", async () => {
+  test("dry-run writes stub adapters.safetensors and exits without spawning", async () => {
     const config = makeConfig();
     mkdirSync(config.output.adaptor_dir, { recursive: true });
 
@@ -208,23 +215,23 @@ describe("runMlxTrain — dry-run", () => {
     await runMlxTrain(config, true);
 
     expect(spawnSpy).not.toHaveBeenCalled();
-    expect(existsSync(join(config.output.adaptor_dir, "adaptor.safetensors"))).toBe(true);
+    expect(existsSync(join(config.output.adaptor_dir, "adapters.safetensors"))).toBe(true);
   });
 });
 
 describe("runMlxTrain — real spawn (mocked)", () => {
-  test("spawns with correct args and streams stderr for loss parsing", async () => {
+  test("spawns with correct args and streams stdout for loss parsing", async () => {
     const config = makeConfig();
     mkdirSync(config.output.adaptor_dir, { recursive: true });
     mkdirSync(config.data.dir, { recursive: true });
 
-    // mlx_lm writes progress to stderr, not stdout
-    const stderr =
+    // mlx_lm writes progress to stdout
+    const stdout =
       "Loading model...\nIter 10: train loss 0.800\nIter 20: train loss 0.650\nDone\n";
 
     const mockProc = {
-      stdout: makeStream(""),
-      stderr: makeStream(stderr),
+      stdout: makeStream(stdout),
+      stderr: makeStream(""),
       exited: Promise.resolve(0),
     };
 
@@ -248,10 +255,10 @@ describe("runMlxTrain — real spawn (mocked)", () => {
     mkdirSync(config.output.adaptor_dir, { recursive: true });
     mkdirSync(config.data.dir, { recursive: true });
 
-    const stderr = "Iter 10: train loss 0.800\nIter 20: train loss 0.650\n";
+    const stdout = "Iter 10: train loss 0.800\nIter 20: train loss 0.650\n";
     const mockProc = {
-      stdout: makeStream(""),
-      stderr: makeStream(stderr),
+      stdout: makeStream(stdout),
+      stderr: makeStream(""),
       exited: Promise.resolve(0),
     };
     spyOn(Bun, "spawn").mockReturnValue(mockProc as ReturnType<typeof Bun.spawn>);
