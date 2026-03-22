@@ -6,8 +6,8 @@ Local AI code generation using MLX on Apple Silicon.
 
 `coder` is a CLI tool for running quantized 7B code models entirely on your Mac — no cloud, no usage costs, no data leaving your machine. The long-term goal is a community marketplace of LoRA adaptor packs: domain expert teams build and publish fine-tuned adaptors for React/TypeScript, GraphQL, or any codebase pattern, and any engineer can pull an adaptor and generate code that adheres to that domain's architecture and quality standards.
 
-> **Status: early (~20% of planned features)**
-> `coder generate`, `coder config`, and `coder models` work today. Streaming, chat, adaptor install/train/eval, and the marketplace are all on the roadmap. See [STATUS.md](./STATUS.md) and [open issues](https://github.com/falese/coder/issues).
+> **Status: early (~40% of planned features)**
+> `coder generate` (with streaming), `coder config`, `coder models`, and `coder logs` work today. Chat, adaptor install/train/eval, and the marketplace are all on the roadmap. See [STATUS.md](./STATUS.md) and [open issues](https://github.com/falese/coder/issues).
 
 ---
 
@@ -45,6 +45,7 @@ The config file lives at `~/.coder/config.toml` and is created automatically on 
 default_model = ""                  # local path or HuggingFace repo id
 adaptors_dir = "~/.coder/adaptors"
 models_dir   = "~/.coder/models"
+logs_dir     = "~/.coder/logs"
 log_level    = "info"               # debug | info | warn | error
 ```
 
@@ -74,13 +75,18 @@ coder config show
 Generate code from a prompt using a local MLX model.
 
 ```bash
-coder generate "<prompt>"                             # uses default_model from config
-coder generate "<prompt>" --model /path/to/model     # explicit model path
+coder generate "<prompt>"                                    # uses default_model from config
+coder generate "<prompt>" --model /path/to/model            # explicit model path
 coder generate "<prompt>" --model /path --max-tokens 256
-coder generate "<prompt>" --model /path | pbcopy     # pipe-friendly: code goes to stdout only
+coder generate "<prompt>" --model /path --stream            # stream tokens as generated
+coder generate "<prompt>" -o output.ts                      # write output to file
+coder generate "<prompt>" --context src/foo.ts              # prepend file to prompt (repeatable)
+coder generate "<prompt>" --adaptor react-ts                # apply a named LoRA adaptor
+coder generate "<prompt>" --system prompts/system.md        # load system prompt from file
+coder generate "<prompt>" --model /path | pbcopy            # pipe-friendly: code goes to stdout only
 ```
 
-> **Note:** Streaming is not yet implemented. Output is buffered until generation completes.
+Token throughput (tok/s) is always printed to stderr. With `--stream`, tokens appear as they are generated; without it, output is buffered until generation completes.
 
 ### `coder config`
 
@@ -92,7 +98,7 @@ coder config get <key>           # print a single value
 coder config show                # print all current config
 ```
 
-Valid keys: `default_model`, `adaptors_dir`, `models_dir`, `log_level`.
+Valid keys: `default_model`, `adaptors_dir`, `models_dir`, `logs_dir`, `log_level`.
 
 ### `coder models`
 
@@ -107,7 +113,19 @@ coder models remove mlx-community/Qwen2.5-Coder-7B-Instruct-4bit  # delete a loc
 
 Models are stored under `models_dir` (default `~/.coder/models`) in `<org>/<name>` subdirectories. The `pull` command downloads directly from HuggingFace via HTTP — no Python required beyond mlx-lm.
 
+The CLI enforces a memory safety gate before spawning mlx_lm: if the estimated model + adaptor memory (disk size × 1.2) would exceed 18 GB, the command exits with an error. A warning is shown if headroom is under 2 GB. Bypass with `CODER_DRY_RUN=1`.
+
 Memory estimates use the formula `params × bytes_per_weight × 1.2` (1.2× overhead factor), derived from the model's `.safetensors` file sizes and the quantization level in `config.json`.
+
+### `coder logs`
+
+View the structured generation log (`~/.coder/logs/coder.log`).
+
+```bash
+coder logs
+```
+
+Every `coder generate` run appends a JSON line recording the event, model, TTFT (ms), and token throughput. The log file is created automatically on first generation.
 
 ---
 
@@ -149,9 +167,17 @@ bun src/cli/index.ts models list
 CODER_DRY_RUN=1 bun src/cli/index.ts models pull mlx-community/Qwen2.5-Coder-7B-Instruct-4bit
 # Expected: [dry-run] would pull mlx-community/Qwen2.5-Coder-7B-Instruct-4bit into ...
 
-# 9. Run the full test suite
+# 9. Dry-run streaming
+CODER_DRY_RUN=1 bun src/cli/index.ts generate "write a fizzbuzz" --stream
+# Expected: # dry-run: write a fizzbuzz  (same output, streaming path bypassed in dry-run)
+
+# 10. View logs (empty until a real generation runs)
+bun src/cli/index.ts logs
+# Expected: either empty log or "No log file found yet"
+
+# 11. Run the full test suite
 bun test
-# Expected: 57 pass, 0 fail
+# Expected: 93 pass, 0 fail
 ```
 
 ---
@@ -172,7 +198,7 @@ bun src/cli/index.ts models info mlx-community/Qwen2.5-Coder-7B-Instruct-4bit
 bun src/cli/index.ts generate "write a TypeScript function that debounces a callback"
 ```
 
-Expect buffered output — nothing appears until generation finishes. Token throughput (tok/s) is printed to stderr. Streaming output is coming in the next release.
+Without `--stream`, output is buffered until generation finishes. Add `--stream` to see tokens as they arrive. Token throughput (tok/s) is always printed to stderr. Each run appends a JSON event to `~/.coder/logs/coder.log` — view with `coder logs`.
 
 ---
 
@@ -183,7 +209,7 @@ Expect buffered output — nothing appears until generation finishes. Token thro
 | `mlx_lm not installed. Run: pip install mlx-lm` | Python mlx-lm package missing | `pip install mlx-lm` |
 | `Model not found at path: ...` | Path doesn't exist or isn't an MLX model directory | Check the path; use `coder models list` to see what's downloaded |
 | `Error: no model specified` | No `--model` flag and no `default_model` in config | `coder config set default_model <path>` |
-| `unknown config key "..."` | Typo in key name | Valid keys: `default_model`, `adaptors_dir`, `models_dir`, `log_level` |
+| `unknown config key "..."` | Typo in key name | Valid keys: `default_model`, `adaptors_dir`, `models_dir`, `logs_dir`, `log_level` |
 | `Warning: could not parse config.toml` | Malformed TOML | Check or delete `~/.coder/config.toml` |
 | `Error: model "<name>" not found` | Model name not in models_dir | Run `coder models list` to see available models |
 
@@ -192,7 +218,7 @@ Expect buffered output — nothing appears until generation finishes. Token thro
 ## Development
 
 ```bash
-bun test                    # all 57 tests
+bun test                    # all 93 tests
 bun test tests/unit         # unit tests only
 bun test tests/integration  # integration tests only
 bun run typecheck           # tsc --noEmit
@@ -208,6 +234,7 @@ src/
   config/               # config loader + types (smol-toml)
   inference/            # mlx-runner subprocess wrapper + output parser
   models/               # model inspector, pull (HuggingFace HTTP), types
+  observability/        # structured JSON logger, log event types
 tests/
   unit/                 # pure function + mocked spawn tests
   integration/          # full CLI subprocess tests (CODER_DRY_RUN=1)
@@ -224,4 +251,6 @@ All code is written test-first. No implementation without a failing test first.
 
 See [STATUS.md](./STATUS.md) for progress against the spec and [open issues](https://github.com/falese/coder/issues) for the full backlog.
 
-**Next up:** `coder generate` streaming + observability (#2 + #10) → `coder chat` (#4) → adaptor install/list/update (#6).
+**Completed:** `coder generate` streaming + TTFT (#2), observability/structured logging (#10), memory safety gate (#15), config management (#5), model management (#3).
+
+**Next up:** `coder chat` (#4) → adaptor install/list/update (#6) → data pipeline (#7).

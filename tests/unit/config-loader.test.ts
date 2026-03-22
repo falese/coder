@@ -8,6 +8,7 @@ import {
   getConfigValue,
   DEFAULT_CONFIG,
 } from "../../src/config/loader.js";
+import { CONFIG_KEYS } from "../../src/config/types.js";
 
 // ---------------------------------------------------------------------------
 // Test harness — isolate each test with a fresh temp config path
@@ -134,5 +135,28 @@ describe("setConfigValue and getConfigValue", () => {
     // default_model was never explicitly set — should return empty string (default)
     const val = getConfigValue("default_model");
     expect(val).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// logs_dir config key
+// ---------------------------------------------------------------------------
+
+describe("logs_dir config", () => {
+  test("logs_dir is in CONFIG_KEYS", () => {
+    expect((CONFIG_KEYS as readonly string[]).includes("logs_dir")).toBe(true);
+  });
+
+  test("loadConfig returns logs_dir with tilde expanded", () => {
+    const config = loadConfig();
+    expect(config.logs_dir).not.toContain("~");
+    expect(config.logs_dir).toContain(".coder");
+  });
+
+  test("expands ~ in logs_dir from config file", () => {
+    writeFileSync(configPath, `logs_dir = "~/.coder/custom-logs"\n`);
+    const config = loadConfig();
+    expect(config.logs_dir).not.toContain("~");
+    expect(config.logs_dir).toContain("custom-logs");
   });
 });

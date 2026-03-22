@@ -34,43 +34,163 @@ export function parseMlxOutput(raw: string): GenerateResult {
   return { generatedText, tokensPerSecond };
 }
 
-export async function runMlx(options: GenerateOptions): Promise<GenerateResult> {
+function buildSpawnArgs(options: GenerateOptions): string[] {
+  const maxTokens = options.maxTokens ?? 512;
+  const args = [
+    "python",
+    "-m",
+    "mlx_lm.generate",
+    "--model",
+    options.model,
+    "--prompt",
+    options.prompt,
+    "--max-tokens",
+    String(maxTokens),
+  ];
+  if (options.adaptor !== undefined) {
+    args.push("--adapter", options.adaptor);
+  }
+  if (options.systemFile !== undefined) {
+    args.push("--system", options.systemFile);
+  }
+  return args;
+}
+
+function handleNonZeroExit(stderr: string, exitCode: number): never {
+  if (stderr.includes("No module named mlx_lm")) {
+    throw new Error("mlx_lm not installed. Run: pip install mlx-lm");
+  }
+  if (stderr.includes("No such file or directory")) {
+    throw new Error(`Model not found at path`);
+  }
+  throw new Error(stderr || `Process exited with code ${String(exitCode)}`);
+}
+
+async function readChunks(
+  stream: ReadableStream<Uint8Array>,
+  onChunk: (chunk: string, isFirst: boolean) => void,
+): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let raw = "";
+  let seenNonEmpty = false;
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const chunk = decoder.decode(value);
+    const isFirst = !seenNonEmpty && chunk.trim().length > 0;
+    if (isFirst) seenNonEmpty = true;
+    onChunk(chunk, isFirst);
+    raw += chunk;
+  }
+
+  return raw;
+}
+
+export async function runMlxBuffered(options: GenerateOptions): Promise<GenerateResult> {
   if (options.dryRun === true) {
     return { generatedText: `# dry-run: ${options.prompt}` };
   }
 
-  const maxTokens = options.maxTokens ?? 512;
+  const spawnTime = Date.now();
+  const proc = Bun.spawn(buildSpawnArgs(options), { stdout: "pipe", stderr: "pipe" });
 
-  const proc = Bun.spawn(
-    [
-      "python",
-      "-m",
-      "mlx_lm.generate",
-      "--model",
-      options.model,
-      "--prompt",
-      options.prompt,
-      "--max-tokens",
-      String(maxTokens),
-    ],
-    { stdout: "pipe", stderr: "pipe" },
-  );
+  let ttftMs: number | undefined;
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
+  const rawOutput = await readChunks(proc.stdout, (_chunk, isFirst) => {
+    if (isFirst) ttftMs = Date.now() - spawnTime;
+  });
+
+  const [stderr, exitCode] = await Promise.all([
     new Response(proc.stderr).text(),
     proc.exited,
   ]);
 
   if (exitCode !== 0) {
-    if (stderr.includes("No module named mlx_lm")) {
-      throw new Error("mlx_lm not installed. Run: pip install mlx-lm");
-    }
-    if (stderr.includes("No such file or directory")) {
-      throw new Error(`Model not found at path: ${options.model}`);
-    }
-    throw new Error(stderr || `Process exited with code ${String(exitCode)}`);
+    handleNonZeroExit(stderr, exitCode);
   }
 
-  return parseMlxOutput(stdout);
+  const result = parseMlxOutput(rawOutput);
+  return { ...result, ttftMs };
 }
+
+async function processStream(
+  options: GenerateOptions,
+  controller: ReadableStreamDefaultController<string>,
+  resolve: (r: GenerateResult) => void,
+  reject: (e: unknown) => void,
+): Promise<void> {
+  const spawnTime = Date.now();
+  const proc = Bun.spawn(buildSpawnArgs(options), { stdout: "pipe", stderr: "pipe" });
+
+  let ttftMs: number | undefined;
+
+  try {
+    const rawOutput = await readChunks(proc.stdout, (chunk, isFirst) => {
+      if (isFirst) ttftMs = Date.now() - spawnTime;
+      controller.enqueue(chunk);
+    });
+    controller.close();
+
+    const [stderr, exitCode] = await Promise.all([
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    if (exitCode !== 0) {
+      reject(
+        new Error(
+          stderr.includes("No module named mlx_lm")
+            ? "mlx_lm not installed. Run: pip install mlx-lm"
+            : stderr.includes("No such file or directory")
+              ? `Model not found at path`
+              : stderr || `Process exited with code ${String(exitCode)}`,
+        ),
+      );
+      return;
+    }
+
+    const result = parseMlxOutput(rawOutput);
+    resolve({ ...result, ttftMs });
+  } catch (e) {
+    controller.error(e);
+    reject(e);
+  }
+}
+
+export function runMlxStream(options: GenerateOptions): {
+  stream: ReadableStream<string>;
+  result: Promise<GenerateResult>;
+} {
+  if (options.dryRun === true) {
+    const text = `# dry-run: ${options.prompt}`;
+    return {
+      stream: new ReadableStream<string>({
+        start(controller) {
+          controller.enqueue(text);
+          controller.close();
+        },
+      }),
+      result: Promise.resolve({ generatedText: text }),
+    };
+  }
+
+  let resolveResult!: (r: GenerateResult) => void;
+  let rejectResult!: (e: unknown) => void;
+  const result = new Promise<GenerateResult>((res, rej) => {
+    resolveResult = res;
+    rejectResult = rej;
+  });
+
+  const stream = new ReadableStream<string>({
+    start(controller): Promise<void> {
+      return processStream(options, controller, resolveResult, rejectResult);
+    },
+  });
+
+  return { stream, result };
+}
+
+// Backward-compatible alias — existing callers import { runMlx }
+export { runMlxBuffered as runMlx };

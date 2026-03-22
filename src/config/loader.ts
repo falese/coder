@@ -15,6 +15,7 @@ export const DEFAULT_CONFIG: CoderConfig = {
   default_model: "",
   adaptors_dir: "~/.coder/adaptors",
   models_dir: "~/.coder/models",
+  logs_dir: "~/.coder/logs",
   log_level: "info",
 };
 
@@ -69,6 +70,7 @@ export function loadConfig(): CoderConfig {
       default_model: DEFAULT_CONFIG.default_model,
       adaptors_dir: DEFAULT_CONFIG.adaptors_dir,
       models_dir: DEFAULT_CONFIG.models_dir,
+      logs_dir: DEFAULT_CONFIG.logs_dir,
       log_level: DEFAULT_CONFIG.log_level,
     };
     writeFileSync(configPath, stringify(toWrite));
@@ -82,6 +84,7 @@ export function loadConfig(): CoderConfig {
     }
     config.adaptors_dir = expandPath(config.adaptors_dir);
     config.models_dir = expandPath(config.models_dir);
+    config.logs_dir = expandPath(config.logs_dir);
     return config;
   }
 
@@ -99,6 +102,7 @@ export function loadConfig(): CoderConfig {
 
   config.adaptors_dir = expandPath(config.adaptors_dir);
   config.models_dir = expandPath(config.models_dir);
+  config.logs_dir = expandPath(config.logs_dir);
   return config;
 }
 
@@ -108,6 +112,7 @@ export function setConfigValue(key: ConfigKey, value: string): void {
     default_model: DEFAULT_CONFIG.default_model,
     adaptors_dir: DEFAULT_CONFIG.adaptors_dir,
     models_dir: DEFAULT_CONFIG.models_dir,
+    logs_dir: DEFAULT_CONFIG.logs_dir,
     log_level: DEFAULT_CONFIG.log_level,
   };
 

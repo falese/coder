@@ -97,7 +97,8 @@ const { default: generated } = await import(generatedPath);
 ## CLI command surface
 
 ```
-coder generate "<prompt>" [--adaptor <n>] [-o <file>] [--context <file>] [--model <path>]
+coder generate "<prompt>" [--adaptor <n>] [-o <file>] [--context <file>] [--model <path>] [--stream] [--system <file>]
+coder logs
 coder chat [--adaptor <n>]
 coder models list
 coder models pull <hf-repo-id>
@@ -122,6 +123,8 @@ coder data split <file>
 ```toml
 default_model = ""          # HF repo id or local path
 adaptors_dir = "~/.coder/adaptors"
+models_dir = "~/.coder/models"
+logs_dir = "~/.coder/logs"
 log_level = "info"          # debug | info | warn | error
 ```
 
@@ -173,8 +176,9 @@ Required metrics:
 | Context window overflow     | Sliding window at 6,000 tokens. WARN log on truncation. No summarisation in v1. |
 | Model download mechanism    | Native HuggingFace HTTP API. No Python subprocess beyond mlx_lm.                |
 | Embedding similarity scorer | Dropped from v1. Composite = tsc + eslint + test pass rate only.                |
-| Streaming + TTFT            | Implement together in one PR. Refactor `runMlx` to Bun `ReadableStream`.        |
+| Streaming + TTFT            | Implemented: `runMlxStream` returns `{ stream, result }`; TTFT = `Date.now()` at spawn vs. first non-empty chunk. |
 | Checkpoint resumption       | Automatic — no `--resume` flag needed from user.                                |
+| Memory safety gate          | `checkMemory(diskBytes, adaptorBytes)`: estimate = diskBytes × 1.2 + adaptorBytes. Refuse if >18 GB, warn if headroom <2 GB. Bypass: `CODER_DRY_RUN=1`. |
 | `data extract` heuristics   | Per-adaptor DSL in `prompts/system.md`. Design spike required before #7.        |
 | Eval injection format       | `CODER_EVAL_OUTPUT` env var pointing to temp file. See spec above.              |
 

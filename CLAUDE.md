@@ -43,15 +43,24 @@ bun run generate      # coder generate (dev)
 
 ## Current state (2026-03-21)
 
-Walking skeleton + config (~10%). What exists:
+Foundation + core UX (~40%). What exists:
 
-- `coder generate "<prompt>" [--model <path>]` — buffered, no streaming; `--model` optional when `default_model` set in config
+- `coder generate "<prompt>" [--model <path>]` — buffered and streaming (`--stream`); `--model` optional when `default_model` set in config
+  - `--stream` — streams via Bun `ReadableStream`; TTFT measured from spawn to first chunk
+  - `--adaptor <name>` — resolves to `adaptors_dir/<name>`, passes path to mlx_lm
+  - `-o <file>` — writes output to file
+  - `--context <file>` — prepends file to prompt (repeatable)
+  - `--system <file>` — passes system prompt to mlx_lm
 - `coder config set/get/show` — reads/writes `~/.coder/config.toml`
-- `parseMlxOutput`, `runMlx` — core subprocess layer
-- `loadConfig`, `setConfigValue`, `getConfigValue` — config with env overrides, `~` expansion, XDG-aware path
-- 31 tests passing, tsc clean, eslint clean
+- `coder models list/pull/info/remove` — model management, HuggingFace HTTP download
+- `coder logs` — streams `~/.coder/logs/coder.log` to stdout
+- `parseMlxOutput`, `runMlx`/`runMlxBuffered`, `runMlxStream` — core subprocess layer
+- `loadConfig`, `setConfigValue`, `getConfigValue` — config with env overrides, `~` expansion
+- Memory safety gate — `checkMemory` enforces 18 GB limit before every generation
+- Structured JSON logger — `generation_start`/`generation_complete` events with TTFT + tok/s
+- 93 tests passing, tsc clean, eslint clean
 
-What does NOT exist yet: streaming, `--adaptor` flag, `chat/models/adaptor/data` commands, observability.
+What does NOT exist yet: `chat`, `adaptor install/train/eval`, `data` commands.
 
 ## Resolved decisions — do not reopen
 
@@ -68,13 +77,15 @@ What does NOT exist yet: streaming, `--adaptor` flag, `chat/models/adaptor/data`
 ## Backlog priority order
 
 1. ~~#5 Config~~ ✅ done
-3. #2 + #10 Generate streaming + Observability (implement together)
-4. #4 Chat REPL
-5. #6 Adaptor install/list/update
-6. #7 Data JSONL pipeline (design spike first)
-7. #8 Adaptor train
-8. #9 Adaptor eval
-9. #11 React/TS adaptor pack
-10. #12 GraphQL adaptor pack
+2. ~~#3 Models~~ ✅ done
+3. ~~#2 + #10 Generate streaming + Observability~~ ✅ done
+4. ~~#15 Memory safety gate~~ ✅ done
+5. #4 Chat REPL
+6. #6 Adaptor install/list/update
+7. #7 Data JSONL pipeline (design spike first)
+8. #8 Adaptor train
+9. #9 Adaptor eval
+10. #11 React/TS adaptor pack
+11. #12 GraphQL adaptor pack
 
 For the current session's issue and full context: @docs/session-prompt.md

@@ -1,5 +1,5 @@
 import { describe, test, expect, spyOn } from "bun:test";
-import { parseMlxOutput, runMlx } from "../../src/inference/mlx-runner.js";
+import { parseMlxOutput, runMlx, runMlxBuffered, runMlxStream } from "../../src/inference/mlx-runner.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -93,5 +93,114 @@ describe("runMlx with mocked spawn", () => {
       spy.mockRestore();
     }
     expect(threw).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runMlxBuffered — TTFT + backward-compat alias
+// ---------------------------------------------------------------------------
+
+describe("runMlxBuffered", () => {
+  test("is the same function as runMlx (backward-compat alias)", () => {
+    expect(runMlxBuffered).toBe(runMlx);
+  });
+
+  test("dry-run returns expected text", async () => {
+    const result = await runMlxBuffered({
+      model: "/models/test",
+      prompt: "hello",
+      dryRun: true,
+    });
+    expect(result.generatedText).toContain("dry-run");
+    expect(result.generatedText).toContain("hello");
+  });
+
+  test("records ttftMs on first non-empty chunk", async () => {
+    const mockOutput =
+      `==========\nPrompt: test\nhello\n==========\n` +
+      `Prompt: 2 tokens, Generation: 50.0 tokens/sec\n`;
+    const spy = spyOn(Bun, "spawn").mockReturnValue(
+      makeMockProcess(mockOutput, "", 0) as ReturnType<typeof Bun.spawn>,
+    );
+    try {
+      const result = await runMlxBuffered({ model: "/models/test", prompt: "test" });
+      expect(typeof result.ttftMs).toBe("number");
+      expect(result.ttftMs).toBeGreaterThanOrEqual(0);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runMlxStream
+// ---------------------------------------------------------------------------
+
+describe("runMlxStream", () => {
+  test("dry-run yields the dry-run text and resolves result", async () => {
+    const { stream, result } = runMlxStream({
+      model: "/models/test",
+      prompt: "hello",
+      dryRun: true,
+    });
+    const reader = stream.getReader();
+    const chunks: string[] = [];
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+    const finalResult = await result;
+    expect(chunks.join("")).toContain("dry-run");
+    expect(finalResult.generatedText).toContain("dry-run");
+  });
+
+  test("yields chunks via ReadableStream for live output", async () => {
+    const mockOutput =
+      `==========\nPrompt: test\nhello world\n==========\n` +
+      `Prompt: 2 tokens, Generation: 50.0 tokens/sec\n`;
+    const spy = spyOn(Bun, "spawn").mockReturnValue(
+      makeMockProcess(mockOutput, "", 0) as ReturnType<typeof Bun.spawn>,
+    );
+    try {
+      const { stream, result } = runMlxStream({ model: "/models/test", prompt: "test" });
+      const reader = stream.getReader();
+      let accumulated = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        accumulated += value;
+      }
+      const finalResult = await result;
+      expect(accumulated.length).toBeGreaterThan(0);
+      expect(finalResult.generatedText).toBe("hello world");
+      expect(finalResult.tokensPerSecond).toBe(50.0);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("result promise resolves with ttftMs after stream closes", async () => {
+    const mockOutput =
+      `==========\nPrompt: test\nhello\n==========\n` +
+      `Prompt: 2 tokens, Generation: 50.0 tokens/sec\n`;
+    const spy = spyOn(Bun, "spawn").mockReturnValue(
+      makeMockProcess(mockOutput, "", 0) as ReturnType<typeof Bun.spawn>,
+    );
+    try {
+      const { stream, result } = runMlxStream({ model: "/models/test", prompt: "test" });
+      // consume stream
+      const reader = stream.getReader();
+      let readDone = false;
+      while (!readDone) {
+        const chunk = await reader.read();
+        readDone = chunk.done;
+      }
+      const finalResult = await result;
+      expect(typeof finalResult.ttftMs).toBe("number");
+      expect(finalResult.ttftMs).toBeGreaterThanOrEqual(0);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

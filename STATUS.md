@@ -10,38 +10,42 @@ The base prompt defines seven objectives. Status tracked below.
 
 | # | Objective | Status | Notes |
 |---|---|---|---|
-| 1 | CLI framework | 🟡 In progress | `generate` + config + model management done; no streaming, no `--adaptor` |
-| 2 | Model management | 🟡 In progress | `models list/pull/info/remove` done; no memory safety gate (warn/refuse on OOM) |
-| 3 | LoRA adaptor framework | 🔴 Not started | `--adaptor` flag wired to mlx_lm not yet built |
+| 1 | CLI framework | 🟡 In progress | `generate` (buffered + streaming) + config + model management done; `--adaptor` flag wired to path resolver but LoRA loading not yet built |
+| 2 | Model management | ✅ Done | `models list/pull/info/remove` + memory safety gate (refuse >18 GB, warn <2 GB headroom) |
+| 3 | LoRA adaptor framework | 🔴 Not started | `adaptor install/list/update/train/eval` not yet built |
 | 4 | Dataset curation tooling | 🔴 Not started | No JSONL pipeline |
 | 5 | Adaptor training pipeline | 🔴 Not started | No `mlx_lm.lora` wrapper |
 | 6 | Quality scoring and eval harness | 🔴 Not started | No scorer, no eval suite runner |
-| 7 | Observability | 🔴 Not started | No structured logging, no metrics emission |
+| 7 | Observability | ✅ Done | Structured JSON logger (`~/.coder/logs/coder.log`), TTFT, tok/s; `coder logs` command |
 
 ### What is implemented
 
-- `coder generate "<prompt>" --model <path>` — spawns `mlx_lm.generate`, parses stdout, prints to stdout
+- `coder generate "<prompt>" [--model <path>]` — spawns `mlx_lm.generate`, parses stdout, prints to stdout
+  - `--stream` — streams tokens via Bun ReadableStream as they arrive; TTFT measured from spawn to first chunk
+  - `--adaptor <name>` — resolves adaptor path from `adaptors_dir` config and passes to mlx_lm
+  - `-o <file>` — writes output to file instead of stdout
+  - `--context <file>` — prepends file content to prompt (repeatable flag)
+  - `--system <file>` — passes system prompt file to mlx_lm
 - `parseMlxOutput` — pure parser for mlx_lm output format with token/s extraction
-- `runMlx` — subprocess runner with actionable error handling (missing mlx_lm, bad model path)
+- `runMlx` / `runMlxBuffered` — buffered subprocess runner with actionable error handling
+- `runMlxStream` — streaming subprocess runner; returns `{ stream: ReadableStream<string>, result: Promise<GenerateResult> }`
 - Dry-run mode via `CODER_DRY_RUN=1` for integration testing without a real model
 - `coder config set/get/show` — reads/writes `~/.coder/config.toml` via smol-toml; env overrides; XDG-aware path; `~` expansion
 - `coder models list` — scans `models_dir`, reports name, quant, disk size, memory estimate
 - `coder models pull <repo-id>` — downloads from HuggingFace via native HTTP API (no Python subprocess)
 - `coder models info <name>` — parses `config.json`, reports model type, quant bits, disk size, memory estimate
 - `coder models remove <name>` — deletes a model directory
-- 57 tests (26 unit, 31 integration), `tsc --noEmit` clean, ESLint clean
+- Memory safety gate — checks `modelDiskBytes × 1.2 + adaptorBytes` before every generation; refuses >18 GB, warns when headroom <2 GB; bypassed by `CODER_DRY_RUN=1`
+- Structured JSON logger — appends `generation_start` and `generation_complete` events (with TTFT, tok/s) to `~/.coder/logs/coder.log`; human-readable messages to stderr at configured log level
+- `coder logs` — streams `~/.coder/logs/coder.log` to stdout
+- 93 tests (unit + integration), `tsc --noEmit` clean, ESLint clean
 
 ### What does not exist yet
 
-- Streaming (buffered only — adequate for testing, not for production UX)
-- LoRA adaptor loading (`--adaptor` flag not wired)
+- LoRA adaptor loading (path resolution done; actual mlx_lm `--adapter` flag wiring to `chat/adaptor train` not yet built)
 - `chat`, `adaptor`, `data` commands
-- Observability (no timing, no structured logs)
-- File output (`-o` flag on generate)
-- Context injection (`--context` flag on generate)
-- Memory safety gate (refuse/warn when model + adaptor exceeds 18 GB)
 
-**Rough completion: ~20% of the full platform.**
+**Rough completion: ~40% of the full platform.**
 
 ---
 
@@ -55,12 +59,14 @@ The base prompt defines seven objectives. Status tracked below.
 |---|---|---|
 | [#5](https://github.com/falese/coder/issues/5) | Config management (`~/.coder/config.toml`) | ✅ **Done** (f235cd1) |
 | [#3](https://github.com/falese/coder/issues/3) | Models: list, pull, info, memory reporting | ✅ **Done** |
+| [#15](https://github.com/falese/coder/issues/15) | Memory safety gate | ✅ **Done** |
+| [#10](https://github.com/falese/coder/issues/10) | Observability: structured logging and metrics | ✅ **Done** |
 
 ### Phase 2 — Core UX
 
 | Issue | Title | Assessment |
 |---|---|---|
-| [#2](https://github.com/falese/coder/issues/2) | Generate: streaming, `--adaptor`, file output, context | Mostly clear. Streaming implementation detail needs decision (see below). |
+| [#2](https://github.com/falese/coder/issues/2) | Generate: streaming, `--adaptor`, file output, context | ✅ **Done** |
 | [#4](https://github.com/falese/coder/issues/4) | Chat: interactive multi-turn REPL | Significant hidden complexity (see below). |
 
 ### Phase 3 — Adaptor platform
@@ -76,7 +82,7 @@ The base prompt defines seven objectives. Status tracked below.
 |---|---|---|
 | [#8](https://github.com/falese/coder/issues/8) | Adaptor train: LoRA training pipeline | Well scoped. Checkpoint resumption needs mlx_lm.lora flag investigation. |
 | [#9](https://github.com/falese/coder/issues/9) | Adaptor eval: quality scoring harness | Most complex issue in the backlog. Significantly underdefined (see below). |
-| [#10](https://github.com/falese/coder/issues/10) | Observability: structured logging and metrics | Well scoped. TTFT measurement approach needs decision (see below). |
+| [#10](https://github.com/falese/coder/issues/10) | Observability: structured logging and metrics | ✅ **Done** |
 
 ### Phase 5 — Domain adaptor packs
 
@@ -130,12 +136,6 @@ This needs a concrete format spec with an example before adaptor authors can wri
 
 ### 🟡 Medium priority — needs clarification before sprint
 
-#### #2 Generate: streaming implementation
-`mlx_lm.generate --stream` prints tokens to stdout as they are generated. Buffered reading (`new Response(proc.stdout).text()`) will not work for streaming — the process doesn't close stdout until generation ends. The issue notes this but doesn't specify the implementation. In Bun, streaming stdout requires reading from the `ReadableStream` in chunks. The approach needs to be defined and a prototype written before streaming can be tested properly.
-
-#### #10 Observability: TTFT measurement
-The issue defines TTFT as "time from process start of mlx_lm subprocess to first non-empty stdout byte". In Bun's spawn API, with `stdout: "pipe"`, you can read the stream incrementally. The implementation needs to record `Date.now()` at spawn time and capture it again on the first chunk. This is straightforward but the current `runMlx` architecture (buffered) needs to be refactored to support it alongside streaming (#2). These two issues should be implemented together.
-
 #### #8 Adaptor train: checkpoint resumption
 `mlx_lm.lora` supports `--resume-adapter-file` to continue training from an existing adaptor file. The issue says "training can be resumed if `weights/adaptor.safetensors` already exists" but doesn't specify whether this is automatic or requires a `--resume` flag. Needs a decision.
 
@@ -150,7 +150,7 @@ No issue exists for GitHub Actions. A basic workflow (install deps, `bun test`, 
 The base prompt specifies hard performance targets (first token < 2s, sustained > 20 tok/s on M3). No issue tracks measuring or validating these targets against a real model. The observability issue (#10) captures the metric emission, but there is no issue for a benchmark harness or pass/fail gate.
 
 #### Missing issue: memory safety check
-The base prompt specifies an 18 GB memory constraint and requires the CLI to expose memory usage. No issue tracks enforcing this — e.g. refusing to load a model + adaptor combination that would exceed available unified memory, or warning when headroom is low. The `models info` command now reports estimates; the gate itself is still missing.
+~~The base prompt specifies an 18 GB memory constraint and requires the CLI to expose memory usage. No issue tracks enforcing this.~~ ✅ Addressed by #15: `checkMemory` enforces the gate before every generation.
 
 #### #6 Adaptor install: registry protocol undefined
 The issue notes "future: hosted registry with `coder adaptor install <name>` resolution" but gives no detail on the registry API, discovery mechanism, or namespace. This is intentionally deferred but should be stubbed as a separate issue so it doesn't get designed ad-hoc when someone tries to implement it.
@@ -166,17 +166,22 @@ The issue notes "future: hosted registry with `coder adaptor install <name>` res
 #3 models ✅
   └── unblocked: #11, #12 (need a real model downloaded)
 
-#2 generate (streaming + adaptor flag)
-  └── depends on: #5 config ✅, #6 adaptor commands
-  └── should be co-implemented with: #10 observability (TTFT needs streaming)
+#15 memory safety gate ✅
+  └── enforced in generate command before every mlx_lm spawn
+
+#2 generate (streaming + adaptor flag + file output + context) ✅
+  └── depends on: #5 config ✅, #6 adaptor commands (path resolution done)
+
+#10 observability ✅
+  └── co-implemented with #2 (streaming refactor enabled TTFT measurement)
 
 #4 chat
-  └── depends on: #5 config ✅, #2 generate (shares streaming + adaptor infrastructure)
-  └── needs: chat template decision (see above)
+  └── depends on: #5 config ✅, #2 generate ✅ (shares streaming + adaptor infrastructure)
+  └── needs: chat template decision (resolved: Option C)
 
 #6 adaptor (install/list/info)
   └── depends on: #5 config ✅ (adaptors_dir path)
-  └── unblocks: #2 (--adaptor flag), #8 train, #9 eval, #11, #12
+  └── unblocks: #8 train, #9 eval, #11, #12
 
 #7 data pipeline
   └── independent — can start anytime
@@ -190,11 +195,8 @@ The issue notes "future: hosted registry with `coder adaptor install <name>` res
   └── depends on: #6 adaptor, #8 train
   └── needs: eval suite format defined, embedding scorer decision (see above)
 
-#10 observability
-  └── should be co-implemented with: #2 generate (streaming refactor)
-
 #11 react-ts adaptor
-  └── depends on: #2, #6, #7, #8, #9 (full platform)
+  └── depends on: #2 ✅, #6, #7, #8, #9 (full platform)
 
 #12 graphql adaptor
   └── depends on: #11
@@ -204,7 +206,7 @@ The issue notes "future: hosted registry with `coder adaptor install <name>` res
 
 ## Recommended next actions
 
-1. **Resolve the three blocking design questions** before writing any code: chat template strategy (#4), `data extract` format (#7), eval suite injection format (#9). These decisions affect multiple issues downstream.
-2. **Implement #2 and #10 together** — streaming and TTFT measurement are tightly coupled; doing them separately will require re-opening one of them.
-3. **Then #4 chat** — depends on streaming infrastructure from #2.
-4. **Create three missing issues** — CI/CD pipeline, performance benchmarking, memory safety gate — before the backlog is considered complete.
+1. **Implement #4 chat** — streaming and adaptor infrastructure from #2 is now done; chat template (Option C) is resolved.
+2. **Implement #6 adaptor install/list/update** — unblocks train, eval, and the domain adaptor packs.
+3. **Resolve `data extract` heuristics (#7)** before implementing the data pipeline — design spike required.
+4. **Create two missing issues** — CI/CD pipeline, performance benchmarking — before the backlog is considered complete.

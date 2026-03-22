@@ -3,6 +3,7 @@ import { Command } from "commander";
 import { createGenerateCommand } from "../commands/generate.js";
 import { createConfigCommand } from "../commands/config.js";
 import { createModelsCommand } from "../commands/models.js";
+import { createLogsCommand } from "../commands/logs.js";
 
 const program = new Command();
 
@@ -14,5 +15,6 @@ program
 program.addCommand(createGenerateCommand());
 program.addCommand(createConfigCommand());
 program.addCommand(createModelsCommand());
+program.addCommand(createLogsCommand());
 
 await program.parseAsync(process.argv);
