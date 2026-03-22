@@ -74,7 +74,8 @@ function buildSpawnArgs(options: GenerateOptions): string[] {
   const args = [
     "python3",
     "-m",
-    "mlx_lm.generate",
+    "mlx_lm",
+    "generate",
     "--model",
     options.model,
     "--prompt",
