@@ -96,7 +96,7 @@ export function formatEvalTable(summary: EvalSummary): string {
 
 export async function runTscCheck(filePath: string): Promise<boolean> {
   const proc = Bun.spawn(
-    ["tsc", "--noEmit", "--allowJs", "--checkJs", "--strict", filePath],
+    ["bunx", "tsc", "--noEmit", "--allowJs", "--checkJs", "--strict", filePath],
     { stdout: "ignore", stderr: "ignore" },
   );
   const exitCode = await proc.exited;
