@@ -1,13 +1,15 @@
 # coder
 
+[![CI](https://github.com/falese/coder/actions/workflows/ci.yml/badge.svg)](https://github.com/falese/coder/actions/workflows/ci.yml)
+
 Local AI code generation using MLX on Apple Silicon.
 
 ## Vision
 
 `coder` is a CLI tool for running quantized 7B code models entirely on your Mac — no cloud, no usage costs, no data leaving your machine. The long-term goal is a community marketplace of LoRA adaptor packs: domain expert teams build and publish fine-tuned adaptors for React/TypeScript, GraphQL, or any codebase pattern, and any engineer can pull an adaptor and generate code that adheres to that domain's architecture and quality standards.
 
-> **Status: early (~40% of planned features)**
-> `coder generate` (with streaming), `coder config`, `coder models`, and `coder logs` work today. Chat, adaptor install/train/eval, and the marketplace are all on the roadmap. See [STATUS.md](./STATUS.md) and [open issues](https://github.com/falese/coder/issues).
+> **Status: ~70% of planned features**
+> `coder generate`, `coder chat`, `coder config`, `coder models`, `coder adaptor`, and `coder logs` work today. Data pipeline, adaptor training/eval, and the marketplace are on the roadmap. See [STATUS.md](./STATUS.md) and [open issues](https://github.com/falese/coder/issues).
 
 ---
 
@@ -117,6 +119,39 @@ The CLI enforces a memory safety gate before spawning mlx_lm: if the estimated m
 
 Memory estimates use the formula `params × bytes_per_weight × 1.2` (1.2× overhead factor), derived from the model's `.safetensors` file sizes and the quantization level in `config.json`.
 
+### `coder chat`
+
+Interactive multi-turn conversation REPL with a local MLX model.
+
+```bash
+coder chat                          # uses default_model from config
+coder chat --model /path/to/model
+coder chat --adaptor react-ts       # apply a named LoRA adaptor
+```
+
+Conversation history is maintained in-memory across turns (sliding window, 6,000 token limit). REPL commands:
+
+| Command | Action |
+|---|---|
+| `/clear` | Reset conversation history |
+| `/save <file>` | Dump conversation to JSON file |
+| `/exit` | Quit (also Ctrl-D) |
+| Ctrl-C | Cancel current generation, return to prompt |
+
+### `coder adaptor`
+
+Manage LoRA adaptor packs.
+
+```bash
+coder adaptor list                              # show installed adaptors
+coder adaptor install <name> --from-git <url>  # clone + validate from git
+coder adaptor info <name>                       # show manifest + eval scores
+coder adaptor update <name>                     # git pull in adaptor directory
+coder adaptor remove <name>                     # delete adaptor directory
+```
+
+Adaptors are stored under `adaptors_dir` (default `~/.coder/adaptors/<name>/`). Each adaptor pack contains weights, training data, an eval suite, a system prompt, and a `manifest.json` validated against the Zod schema on install.
+
 ### `coder logs`
 
 View the structured generation log (`~/.coder/logs/coder.log`).
@@ -125,7 +160,24 @@ View the structured generation log (`~/.coder/logs/coder.log`).
 coder logs
 ```
 
-Every `coder generate` run appends a JSON line recording the event, model, TTFT (ms), and token throughput. The log file is created automatically on first generation.
+Every `coder generate` and `coder chat` turn appends a JSON line recording the event, model, TTFT (ms), and token throughput. The log file is created automatically on first generation.
+
+### `coder data`
+
+Dataset curation pipeline for LoRA adaptor training. See [docs/data-pipeline.md](./docs/data-pipeline.md) for a complete guide on setting up your source repo and running the full pipeline.
+
+```bash
+coder data ingest "src/**/*.ts" --output raw.jsonl          # one record per file
+coder data extract --adaptor react-ts --input raw.jsonl \
+  --output extracted.jsonl                                  # apply extract.json rules
+coder data deduplicate extracted.jsonl --output deduped.jsonl  # remove near-dupes (Jaccard 0.85)
+coder data validate deduped.jsonl                           # gates: non-empty, ≤2048 tokens
+coder data split deduped.jsonl \
+  --output-dir ~/.coder/adaptors/react-ts/data/             # 90/10 → train.jsonl + eval.jsonl
+coder data stats deduped.jsonl                              # count, token percentiles, dup rate
+```
+
+The output of `coder data split` lands directly in the adaptor's `data/` directory, ready for `coder adaptor train`.
 
 ---
 
@@ -177,7 +229,7 @@ bun src/cli/index.ts logs
 
 # 11. Run the full test suite
 bun test
-# Expected: 93 pass, 0 fail
+# Expected: 143 pass, 0 fail
 ```
 
 ---
@@ -218,10 +270,10 @@ Without `--stream`, output is buffered until generation finishes. Add `--stream`
 ## Development
 
 ```bash
-bun test                    # all 93 tests
+bun test                    # all 143 tests
 bun test tests/unit         # unit tests only
 bun test tests/integration  # integration tests only
-bun run typecheck           # tsc --noEmit
+bun run build               # tsc --noEmit
 bun run lint                # eslint .
 ```
 
@@ -232,8 +284,10 @@ src/
   cli/index.ts          # entry point, command registration
   commands/             # one file per command group
   config/               # config loader + types (smol-toml)
-  inference/            # mlx-runner subprocess wrapper + output parser
+  inference/            # mlx-runner subprocess wrapper, memory gate, output parser
   models/               # model inspector, pull (HuggingFace HTTP), types
+  adaptors/             # adaptor manager, manifest validation (Zod), types
+  chat/                 # conversation history, ChatML formatting, sliding window
   observability/        # structured JSON logger, log event types
 tests/
   unit/                 # pure function + mocked spawn tests
@@ -251,6 +305,6 @@ All code is written test-first. No implementation without a failing test first.
 
 See [STATUS.md](./STATUS.md) for progress against the spec and [open issues](https://github.com/falese/coder/issues) for the full backlog.
 
-**Completed:** `coder generate` streaming + TTFT (#2), observability/structured logging (#10), memory safety gate (#15), config management (#5), model management (#3).
+**Completed:** config (#5), model management (#3), generate streaming + TTFT (#2), observability (#10), memory safety gate (#15), preflight check (#17), adaptor install/list/update/info/remove (#6), chat REPL (#4), CI workflow (#13), data pipeline (#7).
 
-**Next up:** `coder chat` (#4) → adaptor install/list/update (#6) → data pipeline (#7).
+**Next up:** adaptor train (#8) → adaptor eval (#9).

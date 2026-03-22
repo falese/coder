@@ -1,5 +1,40 @@
 import type { GenerateOptions, GenerateResult } from "./types.js";
 
+// ---------------------------------------------------------------------------
+// Preflight check — cached per process, skipped when CODER_DRY_RUN=1
+// ---------------------------------------------------------------------------
+
+let preflightDone = false;
+
+export async function checkPreflight(): Promise<void> {
+  if (preflightDone || process.env.CODER_DRY_RUN === "1") return;
+  const proc = Bun.spawn(["python3", "-c", "import mlx_lm"], {
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  if (exitCode !== 0) {
+    if (stderr.includes("No module named mlx_lm")) {
+      throw new Error("mlx_lm not installed. Run: pip install mlx-lm");
+    }
+    throw new Error(
+      "python3 not found. Install Python 3.x from https://python.org",
+    );
+  }
+  preflightDone = true;
+}
+
+export function resetPreflightForTest(): void {
+  preflightDone = false;
+}
+
+export function markPreflightDoneForTest(): void {
+  preflightDone = true;
+}
+
 /**
  * Parse raw stdout from `mlx_lm.generate`.
  *
@@ -37,7 +72,7 @@ export function parseMlxOutput(raw: string): GenerateResult {
 function buildSpawnArgs(options: GenerateOptions): string[] {
   const maxTokens = options.maxTokens ?? 512;
   const args = [
-    "python",
+    "python3",
     "-m",
     "mlx_lm.generate",
     "--model",
@@ -48,10 +83,13 @@ function buildSpawnArgs(options: GenerateOptions): string[] {
     String(maxTokens),
   ];
   if (options.adaptor !== undefined) {
-    args.push("--adapter", options.adaptor);
+    args.push("--adapter-path", options.adaptor);
   }
   if (options.systemFile !== undefined) {
-    args.push("--system", options.systemFile);
+    args.push("--system-prompt", options.systemFile);
+  }
+  if (options.rawPrompt === true) {
+    args.push("--ignore-chat-template");
   }
   return args;
 }
@@ -93,6 +131,8 @@ export async function runMlxBuffered(options: GenerateOptions): Promise<Generate
     return { generatedText: `# dry-run: ${options.prompt}` };
   }
 
+  await checkPreflight();
+
   const spawnTime = Date.now();
   const proc = Bun.spawn(buildSpawnArgs(options), { stdout: "pipe", stderr: "pipe" });
 
@@ -121,6 +161,8 @@ async function processStream(
   resolve: (r: GenerateResult) => void,
   reject: (e: unknown) => void,
 ): Promise<void> {
+  await checkPreflight();
+
   const spawnTime = Date.now();
   const proc = Bun.spawn(buildSpawnArgs(options), { stdout: "pipe", stderr: "pipe" });
 

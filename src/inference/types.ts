@@ -8,6 +8,7 @@ export interface GenerateOptions {
   outputFile?: string;     // write output to file instead of stdout
   contextFiles?: string[]; // prepend these files to the prompt
   systemFile?: string;     // path to system prompt file
+  rawPrompt?: boolean;     // pass --ignore-chat-template (prompt is pre-formatted)
 }
 
 export interface GenerateResult {

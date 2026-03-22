@@ -1,5 +1,13 @@
-import { describe, test, expect, spyOn } from "bun:test";
-import { parseMlxOutput, runMlx, runMlxBuffered, runMlxStream } from "../../src/inference/mlx-runner.js";
+import { describe, test, expect, spyOn, beforeEach } from "bun:test";
+import {
+  parseMlxOutput,
+  runMlx,
+  runMlxBuffered,
+  runMlxStream,
+  checkPreflight,
+  resetPreflightForTest,
+  markPreflightDoneForTest,
+} from "../../src/inference/mlx-runner.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -61,6 +69,10 @@ describe("parseMlxOutput", () => {
 // ---------------------------------------------------------------------------
 
 describe("runMlx with mocked spawn", () => {
+  beforeEach(() => {
+    markPreflightDoneForTest();
+  });
+
   test("success path returns parsed result", async () => {
     const mockOutput =
       `==========\nPrompt: test\nhello world\n==========\n` +
@@ -101,6 +113,10 @@ describe("runMlx with mocked spawn", () => {
 // ---------------------------------------------------------------------------
 
 describe("runMlxBuffered", () => {
+  beforeEach(() => {
+    markPreflightDoneForTest();
+  });
+
   test("is the same function as runMlx (backward-compat alias)", () => {
     expect(runMlxBuffered).toBe(runMlx);
   });
@@ -137,6 +153,10 @@ describe("runMlxBuffered", () => {
 // ---------------------------------------------------------------------------
 
 describe("runMlxStream", () => {
+  beforeEach(() => {
+    markPreflightDoneForTest();
+  });
+
   test("dry-run yields the dry-run text and resolves result", async () => {
     const { stream, result } = runMlxStream({
       model: "/models/test",
@@ -181,6 +201,7 @@ describe("runMlxStream", () => {
   });
 
   test("result promise resolves with ttftMs after stream closes", async () => {
+
     const mockOutput =
       `==========\nPrompt: test\nhello\n==========\n` +
       `Prompt: 2 tokens, Generation: 50.0 tokens/sec\n`;
@@ -202,5 +223,91 @@ describe("runMlxStream", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// checkPreflight
+// ---------------------------------------------------------------------------
+
+describe("checkPreflight", () => {
+  beforeEach(() => {
+    resetPreflightForTest();
+  });
+
+  test("skips when CODER_DRY_RUN=1", async () => {
+    const prev = process.env.CODER_DRY_RUN;
+    process.env.CODER_DRY_RUN = "1";
+    const spy = spyOn(Bun, "spawn");
+    try {
+      await checkPreflight();
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      if (prev === undefined) delete process.env.CODER_DRY_RUN;
+      else process.env.CODER_DRY_RUN = prev;
+      spy.mockRestore();
+      resetPreflightForTest();
+    }
+  });
+
+  test("caches result — second call does not spawn again", async () => {
+    const spy = spyOn(Bun, "spawn").mockReturnValue(
+      makeMockProcess("", "", 0) as ReturnType<typeof Bun.spawn>,
+    );
+    try {
+      await checkPreflight();
+      await checkPreflight();
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("throws python3 message when exit code is 127", async () => {
+    const spy = spyOn(Bun, "spawn").mockReturnValue(
+      makeMockProcess("", "", 127) as ReturnType<typeof Bun.spawn>,
+    );
+    let threw = false;
+    let message = "";
+    try {
+      await checkPreflight();
+    } catch (e) {
+      threw = true;
+      message = e instanceof Error ? e.message : String(e);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(threw).toBe(true);
+    expect(message).toContain("python3 not found");
+  });
+
+  test("throws mlx_lm message when exit 1 and stderr contains 'No module named mlx_lm'", async () => {
+    const spy = spyOn(Bun, "spawn").mockReturnValue(
+      makeMockProcess("", "No module named mlx_lm", 1) as ReturnType<typeof Bun.spawn>,
+    );
+    let threw = false;
+    let message = "";
+    try {
+      await checkPreflight();
+    } catch (e) {
+      threw = true;
+      message = e instanceof Error ? e.message : String(e);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(threw).toBe(true);
+    expect(message).toContain("mlx_lm not installed");
+  });
+
+  test("resolves without error on exit 0", async () => {
+    const spy = spyOn(Bun, "spawn").mockReturnValue(
+      makeMockProcess("", "", 0) as ReturnType<typeof Bun.spawn>,
+    );
+    try {
+      await checkPreflight();
+    } finally {
+      spy.mockRestore();
+    }
+    // no throw = pass
   });
 });

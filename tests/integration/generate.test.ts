@@ -1,8 +1,20 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "path";
+import { tmpdir } from "node:os";
 
 const BUN = process.execPath;
 const CLI = join(import.meta.dir, "../../src/cli/index.ts");
+
+let tempDir: string;
+
+beforeEach(() => {
+  tempDir = mkdtempSync(join(tmpdir(), "coder-gen-test-"));
+});
+
+afterEach(() => {
+  rmSync(tempDir, { recursive: true, force: true });
+});
 
 async function runCLI(
   args: string[],
@@ -11,7 +23,11 @@ async function runCLI(
   const proc = Bun.spawn([BUN, CLI, ...args], {
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, ...env },
+    env: {
+      ...process.env,
+      CODER_CONFIG_PATH: join(tempDir, "config.toml"),
+      ...env,
+    },
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([

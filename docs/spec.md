@@ -49,9 +49,42 @@ adaptor-pack/
 ├── evals/
 │   └── eval_suite.ts
 ├── prompts/
-│   └── system.md          # system prompt + data extract DSL patterns
+│   └── system.md          # system prompt passed to mlx_lm via --system-prompt
+├── extract.json            # data extraction rules for coder data extract
 └── manifest.json
 ```
+
+### `extract.json` schema
+
+Defines rules for `coder data extract`. Validated with Zod on load.
+
+```json
+{
+  "rules": [
+    { "prompt": "jsdoc", "completion": "next_function" },
+    { "prompt": "line_comment", "completion": "next_block" }
+  ]
+}
+```
+
+Supported prompt anchors:
+
+| Anchor | Matches |
+|---|---|
+| `jsdoc` | `/** ... */` block immediately preceding a declaration |
+| `line_comment` | One or more `//` lines immediately preceding a statement |
+| `ts_declare` | `declare module '...' {` header line (TypeScript remote type contracts) |
+
+Supported completion anchors:
+
+| Anchor | Matches |
+|---|---|
+| `next_function` | `function`/`const`/arrow declaration + body following the prompt |
+| `next_block` | Next `{...}` block statement following the prompt |
+| `declare_body` | Body inside a `declare module { }` block |
+| `constructor_call` | `new ClassName({...})` expression following the prompt |
+
+Rules are applied in order; first match wins. Sections with no match are skipped.
 
 ### Manifest schema
 
@@ -111,9 +144,12 @@ coder adaptor update <name>
 coder adaptor info <name>
 coder adaptor train --config <path>
 coder adaptor eval <name>
-coder data ingest <dir>
-coder data validate <file>
-coder data split <file>
+coder data ingest <glob>
+coder data extract --adaptor <name>
+coder data deduplicate <file.jsonl>
+coder data validate <file.jsonl>
+coder data split <file.jsonl>
+coder data stats <file.jsonl>
 ```
 
 ---
@@ -179,7 +215,7 @@ Required metrics:
 | Streaming + TTFT            | Implemented: `runMlxStream` returns `{ stream, result }`; TTFT = `Date.now()` at spawn vs. first non-empty chunk. |
 | Checkpoint resumption       | Automatic — no `--resume` flag needed from user.                                |
 | Memory safety gate          | `checkMemory(diskBytes, adaptorBytes)`: estimate = diskBytes × 1.2 + adaptorBytes. Refuse if >18 GB, warn if headroom <2 GB. Bypass: `CODER_DRY_RUN=1`. |
-| `data extract` heuristics   | Per-adaptor DSL in `prompts/system.md`. Design spike required before #7.        |
+| `data extract` heuristics   | Structured rules in `extract.json` (adaptor pack root, separate from `manifest.json`). Named anchors: `jsdoc`, `line_comment` → `next_function`, `next_block`. `--adaptor` required; missing `extract.json` is a hard error. |
 | Eval injection format       | `CODER_EVAL_OUTPUT` env var pointing to temp file. See spec above.              |
 
 ---
