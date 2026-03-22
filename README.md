@@ -1,24 +1,60 @@
-# coder
+<div align="center">
+
+# ⌘ coder
+
+**Local AI code generation using MLX on Apple Silicon**
 
 [![CI](https://github.com/falese/coder/actions/workflows/ci.yml/badge.svg)](https://github.com/falese/coder/actions/workflows/ci.yml)
+![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
+![Bun](https://img.shields.io/badge/Bun-runtime-f9f1e1?logo=bun&logoColor=black)
+![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-M3%E2%80%93M5-999999?logo=apple&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-green)
 
-Local AI code generation using MLX on Apple Silicon.
+Run quantized 7B code models entirely on your Mac — no cloud, no usage costs, no data leaving your machine.
+
+[Getting Started](#installation) · [Commands](#commands) · [Adaptor Packs](#coder-adaptor) · [Data Pipeline](#coder-data) · [Development](#development)
+
+</div>
+
+---
 
 ## Vision
 
 `coder` is a CLI tool for running quantized 7B code models entirely on your Mac — no cloud, no usage costs, no data leaving your machine. The long-term goal is a community marketplace of LoRA adaptor packs: domain expert teams build and publish fine-tuned adaptors for React/TypeScript, GraphQL, or any codebase pattern, and any engineer can pull an adaptor and generate code that adheres to that domain's architecture and quality standards.
 
+> [!NOTE]
 > **Status: ~90% of planned features**
 > `coder generate`, `coder chat`, `coder config`, `coder models`, `coder adaptor` (including `eval`), `coder data`, and `coder logs` all work today. Domain adaptor packs (React/TS, GraphQL) and the marketplace are on the roadmap. See [STATUS.md](./STATUS.md) and [open issues](https://github.com/falese/coder/issues).
+
+### How it works
+
+```mermaid
+graph LR
+    A["<b>Prompt</b><br/>coder generate &quot;…&quot;"] --> B["<b>Memory Gate</b><br/>≤ 18 GB check"]
+    B --> C["<b>MLX Engine</b><br/>mlx_lm subprocess"]
+    C --> D["<b>Output</b><br/>stdout / file / pipe"]
+
+    E["<b>LoRA Adaptor</b><br/>--adaptor react-ts"] -.-> C
+    F["<b>Context Files</b><br/>--context src/*.ts"] -.-> A
+
+    style A fill:#4A90D9,color:#fff,stroke:none
+    style B fill:#D4A84B,color:#fff,stroke:none
+    style C fill:#7B68EE,color:#fff,stroke:none
+    style D fill:#50C878,color:#fff,stroke:none
+    style E fill:#E8E8E8,color:#333,stroke:#999,stroke-dasharray:5 5
+    style F fill:#E8E8E8,color:#333,stroke:#999,stroke-dasharray:5 5
+```
 
 ---
 
 ## Prerequisites
 
-- macOS with Apple Silicon (M3–M5)
-- [Bun](https://bun.sh) >= 1.3
-- Python 3 with mlx-lm: `pip install mlx-lm`
-- 18 GB unified memory recommended
+| Requirement | Details |
+|:---|:---|
+| **macOS** | Apple Silicon (M3–M5) |
+| **Bun** | >= 1.3 — [bun.sh](https://bun.sh) |
+| **Python 3** | with `mlx-lm` — `pip install mlx-lm` |
+| **Memory** | 18 GB unified memory recommended |
 
 ---
 
@@ -33,9 +69,10 @@ bun install
 bun link
 ```
 
-Without `bun link`, use `bun src/cli/index.ts` in place of `coder` in all examples below.
-
-`bun link` requires `~/.bun/bin` to be on your `PATH` (bun's installer adds this automatically to `.zshrc`/`.bashrc`). If `coder` isn't found after linking, run `source ~/.zshrc` or open a new terminal tab.
+> [!TIP]
+> Without `bun link`, use `bun src/cli/index.ts` in place of `coder` in all examples below.
+>
+> `bun link` requires `~/.bun/bin` to be on your `PATH` (bun's installer adds this automatically to `.zshrc`/`.bashrc`). If `coder` isn't found after linking, run `source ~/.zshrc` or open a new terminal tab.
 
 ---
 
@@ -62,7 +99,7 @@ coder config show
 ### Environment variable overrides
 
 | Variable | Overrides |
-|---|---|
+|:---|:---|
 | `CODER_MODEL` | `default_model` |
 | `CODER_LOG_LEVEL` | `log_level` |
 | `CODER_MODELS_DIR` | `models_dir` |
@@ -74,7 +111,7 @@ coder config show
 
 ### `coder generate`
 
-Generate code from a prompt using a local MLX model.
+> Generate code from a prompt using a local MLX model.
 
 ```bash
 coder generate "<prompt>"                                    # uses default_model from config
@@ -90,9 +127,11 @@ coder generate "<prompt>" --model /path | pbcopy            # pipe-friendly: cod
 
 Token throughput (tok/s) is always printed to stderr. With `--stream`, tokens appear as they are generated; without it, output is buffered until generation completes.
 
+---
+
 ### `coder config`
 
-Read and write `~/.coder/config.toml`.
+> Read and write `~/.coder/config.toml`.
 
 ```bash
 coder config set <key> <value>   # set a config value
@@ -102,9 +141,11 @@ coder config show                # print all current config
 
 Valid keys: `default_model`, `adaptors_dir`, `models_dir`, `logs_dir`, `log_level`.
 
+---
+
 ### `coder models`
 
-Manage local MLX models.
+> Manage local MLX models.
 
 ```bash
 coder models list                                          # list downloaded models
@@ -115,13 +156,20 @@ coder models remove mlx-community/Qwen2.5-Coder-7B-Instruct-4bit  # delete a loc
 
 Models are stored under `models_dir` (default `~/.coder/models`) in `<org>/<name>` subdirectories. The `pull` command downloads directly from HuggingFace via HTTP — no Python required beyond mlx-lm.
 
+<details>
+<summary><b>Memory safety gate</b></summary>
+
 The CLI enforces a memory safety gate before spawning mlx_lm: if the estimated model + adaptor memory (disk size × 1.2) would exceed 18 GB, the command exits with an error. A warning is shown if headroom is under 2 GB. Bypass with `CODER_DRY_RUN=1`.
 
 Memory estimates use the formula `params × bytes_per_weight × 1.2` (1.2× overhead factor), derived from the model's `.safetensors` file sizes and the quantization level in `config.json`.
 
+</details>
+
+---
+
 ### `coder chat`
 
-Interactive multi-turn conversation REPL with a local MLX model.
+> Interactive multi-turn conversation REPL with a local MLX model.
 
 ```bash
 coder chat                          # uses default_model from config
@@ -132,15 +180,17 @@ coder chat --adaptor react-ts       # apply a named LoRA adaptor
 Conversation history is maintained in-memory across turns (sliding window, 6,000 token limit). REPL commands:
 
 | Command | Action |
-|---|---|
+|:---|:---|
 | `/clear` | Reset conversation history |
 | `/save <file>` | Dump conversation to JSON file |
 | `/exit` | Quit (also Ctrl-D) |
 | Ctrl-C | Cancel current generation, return to prompt |
 
+---
+
 ### `coder adaptor`
 
-Manage LoRA adaptor packs.
+> Manage LoRA adaptor packs.
 
 ```bash
 coder adaptor list                              # show installed adaptors
@@ -156,13 +206,50 @@ coder adaptor eval <name> --input <file>       # score against a specific eval J
 
 Adaptors are stored under `adaptors_dir` (default `~/.coder/adaptors/<name>/`). Each adaptor pack contains weights, training data, an eval suite, a system prompt, and a `manifest.json` validated against the Zod schema on install.
 
+<details>
+<summary><b>Training workflow</b></summary>
+
 The `train` subcommand reads a TOML config file (see [docs/data-pipeline.md](./docs/data-pipeline.md) for the full end-to-end workflow), generates the YAML config required by `mlx_lm.lora`, streams training loss to a per-run log file, auto-resumes from a checkpoint if one exists, and bumps the manifest patch version on completion.
+
+```mermaid
+graph TD
+    A["train-config.toml"] --> B["coder adaptor train"]
+    B --> C["mlx_lm.lora subprocess"]
+    C --> D{"Checkpoint<br/>exists?"}
+    D -- Yes --> E["Resume from checkpoint"]
+    D -- No --> F["Train from scratch"]
+    E --> G["adaptor.safetensors"]
+    F --> G
+    G --> H["Bump manifest version"]
+
+    style A fill:#F5F5F5,color:#333,stroke:#CCC
+    style B fill:#4A90D9,color:#fff,stroke:none
+    style C fill:#7B68EE,color:#fff,stroke:none
+    style D fill:#D4A84B,color:#fff,stroke:none
+    style G fill:#50C878,color:#fff,stroke:none
+    style H fill:#50C878,color:#fff,stroke:none
+```
+
+</details>
+
+<details>
+<summary><b>Eval scoring</b></summary>
 
 The `eval` subcommand generates output for each prompt in the adaptor's `data/eval.jsonl`, scores it with `tsc --noEmit` (40%), `eslint` (30%), and `bun test evals/eval_suite.ts` (30%), prints a per-record table, and writes the composite score to `manifest.json`. Use `--baseline` to score the base model before training and establish a `baseline_pass_rate` for comparison.
 
+| Check | Weight |
+|:---|:---:|
+| `tsc --noEmit` | 40% |
+| `eslint` | 30% |
+| `bun test evals/eval_suite.ts` | 30% |
+
+</details>
+
+---
+
 ### `coder logs`
 
-View the structured generation log (`~/.coder/logs/coder.log`).
+> View the structured generation log (`~/.coder/logs/coder.log`).
 
 ```bash
 coder logs
@@ -170,9 +257,13 @@ coder logs
 
 Every `coder generate` and `coder chat` turn appends a JSON line recording the event, model, TTFT (ms), and token throughput. The log file is created automatically on first generation.
 
+---
+
 ### `coder data`
 
-Dataset curation pipeline for LoRA adaptor training. See [docs/data-pipeline.md](./docs/data-pipeline.md) for a complete guide on setting up your source repo and running the full pipeline.
+> Dataset curation pipeline for LoRA adaptor training.
+
+See [docs/data-pipeline.md](./docs/data-pipeline.md) for a complete guide on setting up your source repo and running the full pipeline.
 
 ```bash
 coder data ingest "src/**/*.ts" --output raw.jsonl          # one record per file
@@ -185,11 +276,30 @@ coder data split deduped.jsonl \
 coder data stats deduped.jsonl                              # count, token percentiles, dup rate
 ```
 
+```mermaid
+graph LR
+    A["ingest"] --> B["extract"]
+    B --> C["deduplicate"]
+    C --> D["validate"]
+    D --> E["split"]
+    E --> F["train.jsonl<br/>+ eval.jsonl"]
+
+    style A fill:#4A90D9,color:#fff,stroke:none
+    style B fill:#5B9FD9,color:#fff,stroke:none
+    style C fill:#6CAED9,color:#fff,stroke:none
+    style D fill:#D4A84B,color:#fff,stroke:none
+    style E fill:#7B68EE,color:#fff,stroke:none
+    style F fill:#50C878,color:#fff,stroke:none
+```
+
 The output of `coder data split` lands directly in the adaptor's `data/` directory, ready for `coder adaptor train`.
 
 ---
 
-## Manual testing — without a real model (dry-run)
+## Manual testing
+
+<details>
+<summary><b>Without a real model (dry-run)</b></summary>
 
 Anyone can verify the CLI works immediately after cloning, with no Python or MLX required.
 
@@ -240,9 +350,10 @@ bun test
 # Expected: 271 pass, 0 fail
 ```
 
----
+</details>
 
-## Manual testing — with a real MLX model
+<details>
+<summary><b>With a real MLX model</b></summary>
 
 ```bash
 # Download Qwen2.5-Coder-7B-Instruct-4bit (~4 GB, fits in 18 GB with headroom for a LoRA adaptor)
@@ -260,12 +371,14 @@ bun src/cli/index.ts generate "write a TypeScript function that debounces a call
 
 Without `--stream`, output is buffered until generation finishes. Add `--stream` to see tokens as they arrive. Token throughput (tok/s) is always printed to stderr. Each run appends a JSON event to `~/.coder/logs/coder.log` — view with `coder logs`.
 
+</details>
+
 ---
 
 ## Error reference
 
 | Error | Cause | Fix |
-|---|---|---|
+|:---|:---|:---|
 | `mlx_lm not installed. Run: pip install mlx-lm` | Python mlx-lm package missing | `pip install mlx-lm` |
 | `Model not found at path: ...` | Path doesn't exist or isn't an MLX model directory | Check the path; use `coder models list` to see what's downloaded |
 | `Error: no model specified` | No `--model` flag and no `default_model` in config | `coder config set default_model <path>` |
@@ -289,20 +402,23 @@ bun run lint                # eslint .
 
 ```
 src/
-  cli/index.ts          # entry point, command registration
-  commands/             # one file per command group
-  config/               # config loader + types (smol-toml)
-  inference/            # mlx-runner subprocess wrapper, memory gate, output parser
-  models/               # model inspector, pull (HuggingFace HTTP), types
-  adaptors/             # adaptor manager, manifest validation (Zod), types
-  chat/                 # conversation history, ChatML formatting, sliding window
-  observability/        # structured JSON logger, log event types
+├── cli/index.ts            # entry point, command registration
+├── commands/               # one file per command group
+├── config/                 # config loader + types (smol-toml)
+├── inference/              # mlx-runner subprocess wrapper, memory gate, output parser
+├── models/                 # model inspector, pull (HuggingFace HTTP), types
+├── adaptors/               # adaptor manager, manifest validation (Zod), types
+├── chat/                   # conversation history, ChatML formatting, sliding window
+├── data/                   # data pipeline: ingest, extract, deduplicate, validate, split, stats
+├── eval/                   # eval runner: tsc + eslint + test scoring
+├── training/               # LoRA training config generation + runner
+└── observability/          # structured JSON logger, log event types
 tests/
-  unit/                 # pure function + mocked spawn tests
-  integration/          # full CLI subprocess tests (CODER_DRY_RUN=1)
+├── unit/                   # pure function + mocked spawn tests
+└── integration/            # full CLI subprocess tests (CODER_DRY_RUN=1)
 docs/
-  spec.md               # full product spec
-  session-prompt.md     # per-session agent context template
+    spec.md                 # full product spec
+    session-prompt.md       # per-session agent context template
 ```
 
 All code is written test-first. No implementation without a failing test first.
@@ -313,6 +429,23 @@ All code is written test-first. No implementation without a failing test first.
 
 See [STATUS.md](./STATUS.md) for progress against the spec and [open issues](https://github.com/falese/coder/issues) for the full backlog.
 
-**Completed:** config (#5), model management (#3), generate streaming + TTFT (#2), observability (#10), memory safety gate (#15), preflight check (#17), adaptor install/list/update/info/remove (#6), chat REPL (#4), CI workflow (#13), data pipeline (#7), adaptor train (#8), adaptor eval (#9).
-
-**Next up:** React/TS adaptor pack (#11).
+```mermaid
+%%{init: {'theme': 'neutral'}}%%
+timeline
+    title Milestone Progress
+    Completed : Config (#5)
+              : Model management (#3)
+              : Generate streaming + TTFT (#2)
+              : Observability (#10)
+              : Memory safety gate (#15)
+              : Preflight check (#17)
+              : Adaptor install/list/update (#6)
+              : Chat REPL (#4)
+              : CI workflow (#13)
+              : Data pipeline (#7)
+              : Adaptor train (#8)
+              : Adaptor eval (#9)
+    Next up   : React/TS adaptor pack (#11)
+    Future    : GraphQL adaptor pack (#12)
+              : Community marketplace
+```
