@@ -182,7 +182,10 @@ export function formatEvalReport(summary: EvalSummary): string {
 // Scorer functions
 // ---------------------------------------------------------------------------
 
-export async function runTscCheck(filePath: string): Promise<ScorerResult> {
+export async function runTscCheck(
+  filePath: string,
+  declarationsPath?: string,
+): Promise<ScorerResult> {
   const checkDir = join(tmpdir(), `coder-tsc-${String(Date.now())}`);
   mkdirSync(checkDir, { recursive: true });
 
@@ -192,24 +195,49 @@ export async function runTscCheck(filePath: string): Promise<ScorerResult> {
   // Replace import statements with any declarations so module resolution
   // doesn't fail, while still checking the actual code for type errors
   const source = readFileSync(filePath, "utf-8");
+
+  // Identifiers already declared in the declarations file — skip their default
+  // imports to avoid redeclaration conflicts (e.g. 'declare namespace React'
+  // would clash with a generated 'declare const React: any')
+  const declarationsContent = declarationsPath
+    ? readFileSync(declarationsPath, "utf-8")
+    : "";
+  const alreadyDeclared = new Set(
+    [...declarationsContent.matchAll(
+      /declare\s+(?:namespace|class|function|const|var|let|enum)\s+(\w+)/g,
+    )].map((m) => m[1]),
+  );
+
   const transformed = source
     .split("\n")
     .map((line) => {
       const trimmed = line.trimStart();
       if (!trimmed.startsWith("import ")) return line;
+      // Detect type-only imports before stripping the keyword — they must become
+      // type aliases so names like ButtonProps can be used in type positions.
+      const isTypeOnly = /^import\s+type\s+/.test(trimmed);
+      const normalized = trimmed.replace(/^import\s+type\s+/, "import ");
       // default import: import Foo from 'bar'  → declare const Foo: any;
-      const defaultMatch = /^import\s+(\w+)\s+from\s+['"]/.exec(trimmed);
-      if (defaultMatch) return `declare const ${defaultMatch[1]}: any;`;
-      // named imports: import { A, B } from 'bar' → declare const A: any; declare const B: any;
-      const namedMatch = /^import\s*\{([^}]+)\}\s+from\s+['"]/.exec(trimmed);
+      // Skip if the declarations file already provides this identifier.
+      const defaultMatch = /^import\s+(\w+)\s+from\s+['"]/.exec(normalized);
+      if (defaultMatch) {
+        if (alreadyDeclared.has(defaultMatch[1])) return "";
+        return `declare const ${defaultMatch[1]}: any;`;
+      }
+      // named imports: import { A, B } from 'bar' → declare const A: any; ...
+      // import type { A, B } from 'bar' → type A = any; ... (usable in type positions)
+      const namedMatch = /^import\s*\{([^}]+)\}\s+from\s+['"]/.exec(normalized);
       if (namedMatch) {
         return namedMatch[1]
           .split(",")
-          .map((n) => `declare const ${n.trim().split(" as ")[0].trim()}: any;`)
+          .map((n) => {
+            const name = n.trim().split(" as ")[0].trim();
+            return isTypeOnly ? `type ${name} = any;` : `declare const ${name}: any;`;
+          })
           .join(" ");
       }
       // namespace import: import * as Foo from 'bar' → declare const Foo: any;
-      const nsMatch = /^import\s*\*\s+as\s+(\w+)\s+from\s+['"]/.exec(trimmed);
+      const nsMatch = /^import\s*\*\s+as\s+(\w+)\s+from\s+['"]/.exec(normalized);
       if (nsMatch) return `declare const ${nsMatch[1]}: any;`;
       // side-effect import: import 'foo' → (remove)
       return "";
@@ -217,16 +245,11 @@ export async function runTscCheck(filePath: string): Promise<ScorerResult> {
     .join("\n");
   writeFileSync(checkFile, transformed);
 
-  // Shim common React types so annotations like React.FC<P> work
+  // Copy adaptor-supplied declarations if provided; otherwise write an empty file
+  // so the tsconfig include glob always has something to pick up.
   writeFileSync(
     join(checkDir, "declarations.d.ts"),
-    [
-      "declare namespace React {",
-      "  type FC<P = {}> = (props: P) => any;",
-      "  type ReactNode = any;",
-      "  function createElement(...args: any[]): any;",
-      "}",
-    ].join("\n") + "\n",
+    declarationsPath ? readFileSync(declarationsPath, "utf-8") : "",
   );
 
   writeFileSync(
@@ -273,7 +296,8 @@ export async function runEslintCheck(
   const projectRoot = process.cwd();
   const lintDir = join(projectRoot, ".coder-eval-tmp");
   mkdirSync(lintDir, { recursive: true });
-  const lintFile = join(lintDir, `eval-${String(Date.now())}.ts`);
+  // Use .tsx so ESLint's typescript-eslint parser handles JSX in completions
+  const lintFile = join(lintDir, `eval-${String(Date.now())}.tsx`);
   writeFileSync(lintFile, readFileSync(filePath, "utf-8"));
 
   // Write a minimal eval ESLint config if no adaptor config provided.
@@ -406,10 +430,20 @@ export async function runEval(
 
   await checkPreflight();
 
-  const eslintConfig = join(adaptorDir, "evals", ".eslintrc.json");
-  const eslintConfigPath = existsSync(eslintConfig)
-    ? eslintConfig
-    : undefined;
+  // Only flat config files (eslint.config.mjs / .js) are supported.
+  // Legacy .eslintrc.json is not compatible with ESLint v9 --config flag.
+  const eslintConfigMjs = join(adaptorDir, "evals", "eslint.config.mjs");
+  const eslintConfigJs = join(adaptorDir, "evals", "eslint.config.js");
+  const eslintConfigPath = existsSync(eslintConfigMjs)
+    ? eslintConfigMjs
+    : existsSync(eslintConfigJs)
+      ? eslintConfigJs
+      : undefined;
+
+  // Adaptor-supplied type declarations for the isolated TSC check environment
+  const declarationsFile = join(adaptorDir, "evals", "declarations.d.ts");
+  const declarationsPath = existsSync(declarationsFile) ? declarationsFile : undefined;
+
   const evalSuiteFile = join(adaptorDir, "evals", "eval_suite.ts");
 
   const evalRecords: EvalRecord[] = [];
@@ -423,14 +457,17 @@ export async function runEval(
 
     const generatedCode = cleanGeneratedOutput(generatedText);
 
+    // Use .tsx so tsc handles JSX syntax in React component completions.
+    // Prepend the prompt (which includes import context) so TSC/ESLint see
+    // the full module — only the completion is stored in the EvalRecord.
     const tempFile = join(
       tmpdir(),
-      `coder-eval-${String(Date.now())}.ts`,
+      `coder-eval-${String(Date.now())}.tsx`,
     );
-    writeFileSync(tempFile, generatedCode);
+    writeFileSync(tempFile, record.prompt + "\n" + generatedCode);
 
     const [tscResult, eslintResult, testsResult] = await Promise.all([
-      runTscCheck(tempFile),
+      runTscCheck(tempFile, declarationsPath),
       runEslintCheck(tempFile, eslintConfigPath),
       existsSync(evalSuiteFile)
         ? runTestsCheck(evalSuiteFile, tempFile)

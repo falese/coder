@@ -96,7 +96,38 @@ describe("runTscCheck", () => {
     expect(result.output).toContain("error TS");
   });
 
-  test("returns pass:true for valid React component with unresolved imports", async () => {
+  test("returns pass:true for JSX component with unresolved imports (no declarations file)", async () => {
+    const file = join(tempDir, "Button.tsx");
+    writeFileSync(file, [
+      "import React from 'react';",
+      "import { Button } from '@mui/material';",
+      "interface Props { label: string; }",
+      "export const MyButton = ({ label }: Props) => <Button>{label}</Button>;",
+    ].join("\n") + "\n");
+    const result = await runTscCheck(file);
+    expect(result.pass).toBe(true);
+  });
+
+  test("returns pass:true when import type { X } is used as a type annotation", async () => {
+    const file = join(tempDir, "typed.tsx");
+    writeFileSync(file, [
+      "import React from 'react';",
+      "import type { ButtonProps } from '@mui/material';",
+      "export const MyButton = (props: ButtonProps) => <div />;",
+    ].join("\n") + "\n");
+    const result = await runTscCheck(file);
+    expect(result.pass).toBe(true);
+  });
+
+  test("returns pass:true for React.FC annotation when declarations file provides React namespace", async () => {
+    const declFile = join(tempDir, "declarations.d.ts");
+    writeFileSync(declFile, [
+      "declare function React(...args: unknown[]): unknown;",
+      "declare namespace React {",
+      "  function createElement(...args: unknown[]): unknown;",
+      "  type FC<P = Record<string, unknown>> = (props: P) => unknown;",
+      "}",
+    ].join("\n") + "\n");
     const file = join(tempDir, "Button.tsx");
     writeFileSync(file, [
       "import React from 'react';",
@@ -104,7 +135,7 @@ describe("runTscCheck", () => {
       "interface Props { label: string; }",
       "export const MyButton: React.FC<Props> = ({ label }) => <Button>{label}</Button>;",
     ].join("\n") + "\n");
-    const result = await runTscCheck(file);
+    const result = await runTscCheck(file, declFile);
     expect(result.pass).toBe(true);
   });
 });
