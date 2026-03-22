@@ -100,8 +100,12 @@ beforeEach(async () => {
 
   // Build a local bare git repo fixture with a valid adaptor structure
   const sourceDir = join(tempDir, "source-adaptor");
-  mkdirSync(sourceDir, { recursive: true });
+  mkdirSync(join(sourceDir, "data"), { recursive: true });
   writeFileSync(join(sourceDir, "manifest.json"), JSON.stringify(VALID_MANIFEST));
+  writeFileSync(
+    join(sourceDir, "data", "eval.jsonl"),
+    JSON.stringify({ prompt: "write a debounce function", completion: "export function debounce() {}" }) + "\n",
+  );
 
   bareRepoPath = await initBareRepo(sourceDir);
 });
@@ -229,4 +233,129 @@ test("coder adaptor --help lists subcommands", async () => {
   expect(stdout).toContain("update");
   expect(stdout).toContain("info");
   expect(stdout).toContain("remove");
+  expect(stdout).toContain("train");
+});
+
+// ---------------------------------------------------------------------------
+// coder adaptor train
+// ---------------------------------------------------------------------------
+
+describe("coder adaptor train", () => {
+  function writeTrainConfig(dir: string, configPath: string): void {
+    const toml = `
+[model]
+path = "${dir}/model"
+
+[lora]
+rank = 8
+target_modules = ["q_proj", "v_proj"]
+iters = 100
+batch_size = 4
+learning_rate = 1e-4
+
+[data]
+dir = "${dir}/data"
+
+[output]
+adaptor_dir = "${dir}/weights"
+manifest = "${dir}/manifest.json"
+log_file = "${dir}/training.log"
+`;
+    writeFileSync(configPath, toml);
+  }
+
+  test("dry-run exits 0 and writes stub adaptor.safetensors", async () => {
+    const configPath = join(tempDir, "train.toml");
+    writeTrainConfig(tempDir, configPath);
+    mkdirSync(join(tempDir, "weights"), { recursive: true });
+
+    const { exitCode, stdout } = await runCLI([
+      "adaptor",
+      "train",
+      "--config",
+      configPath,
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("Training complete.");
+    expect(existsSync(join(tempDir, "weights", "adaptor.safetensors"))).toBe(true);
+  });
+
+  test("exits 1 when --config flag is missing", async () => {
+    const { exitCode } = await runCLI(["adaptor", "train"]);
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("exits 1 when config file does not exist", async () => {
+    const { exitCode, stderr } = await runCLI([
+      "adaptor",
+      "train",
+      "--config",
+      "/nonexistent/train.toml",
+    ]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("Error:");
+  });
+
+  test("exits 1 when config file has invalid schema", async () => {
+    const configPath = join(tempDir, "bad.toml");
+    writeFileSync(configPath, "[model]\npath = \"\"\n");
+
+    const { exitCode, stderr } = await runCLI([
+      "adaptor",
+      "train",
+      "--config",
+      configPath,
+    ]);
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("Error:");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// coder adaptor eval
+// ---------------------------------------------------------------------------
+
+describe("coder adaptor eval", () => {
+  test("dry-run exits 0 with table output", async () => {
+    const url = `file://${bareRepoPath}`;
+    await runCLI(["adaptor", "install", "react-ts", "--from-git", url], {
+      CODER_DRY_RUN: "",
+    });
+
+    const { exitCode, stdout } = await runCLI([
+      "adaptor",
+      "eval",
+      "react-ts",
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("COMPOSITE");
+    expect(stdout).toContain("MEAN");
+    expect(stdout).toContain("eval_pass_rate");
+  });
+
+  test("--baseline writes baseline_pass_rate", async () => {
+    const url = `file://${bareRepoPath}`;
+    await runCLI(["adaptor", "install", "react-ts", "--from-git", url], {
+      CODER_DRY_RUN: "",
+    });
+
+    const { exitCode, stdout } = await runCLI([
+      "adaptor",
+      "eval",
+      "react-ts",
+      "--baseline",
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("baseline_pass_rate");
+  });
+
+  test("exits 1 when adaptor not installed", async () => {
+    const { exitCode, stderr } = await runCLI(["adaptor", "eval", "nonexistent"]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("Error:");
+  });
 });

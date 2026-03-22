@@ -25,10 +25,40 @@ export interface GenerationCompleteEvent {
   adaptor?: string;
 }
 
+export interface TrainingStepEvent {
+  event: "training_step";
+  ts: string;
+  iter: number;
+  loss: number;
+  model: string;
+}
+
+export interface TrainingCompleteEvent {
+  event: "training_complete";
+  ts: string;
+  model: string;
+  adaptor_dir: string;
+  final_loss?: number;
+}
+
+export interface EvalCompleteEvent {
+  event: "eval_complete";
+  ts: string;
+  adaptor: string;
+  composite_score: number;
+  tsc_score: number;
+  eslint_score: number;
+  test_score: number;
+  record_count: number;
+}
+
 export type LogEvent =
   | GenerationStartEvent
   | FirstTokenEvent
-  | GenerationCompleteEvent;
+  | GenerationCompleteEvent
+  | TrainingStepEvent
+  | TrainingCompleteEvent
+  | EvalCompleteEvent;
 
 export interface LogLine {
   ts: string;

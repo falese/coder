@@ -9,6 +9,7 @@ export const ManifestSchema = z.object({
   lora_rank: z.number().int().positive(),
   min_memory_gb: z.number().positive(),
   eval_pass_rate: z.number().min(0).max(1),
+  baseline_pass_rate: z.number().min(0).max(1).optional(),
   author: z.string(),
   description: z.string(),
 });

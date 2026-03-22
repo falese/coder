@@ -7,6 +7,10 @@ import {
   installAdaptor,
   updateAdaptor,
 } from "../adaptors/manager.js";
+import { loadTrainConfig } from "../training/config.js";
+import { runMlxTrain } from "../training/runner.js";
+import { runEval, formatEvalTable, updateManifestScore } from "../eval/runner.js";
+import { logger } from "../observability/logger.js";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
 
@@ -117,6 +121,91 @@ export function createAdaptorCommand(): Command {
         process.exit(1);
       }
     });
+
+  cmd
+    .command("train")
+    .description("Run LoRA fine-tuning from a train config file")
+    .requiredOption("--config <path>", "Path to train-config.toml")
+    .action(async (options: { config: string }) => {
+      const dryRun = process.env.CODER_DRY_RUN === "1";
+      try {
+        const config = loadTrainConfig(options.config);
+        await runMlxTrain(config, dryRun);
+        process.stdout.write("Training complete.\n");
+      } catch (err) {
+        process.stderr.write(
+          `Error: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+        process.exit(1);
+      }
+    });
+
+  cmd
+    .command("eval <name>")
+    .description("Score adaptor output quality against the eval suite")
+    .option("--model <path>", "Model path (defaults to config default_model)")
+    .option("--input <file>", "Override eval JSONL (default: <adaptor>/data/eval.jsonl)")
+    .option("--baseline", "Write score to baseline_pass_rate instead of eval_pass_rate")
+    .action(
+      async (
+        name: string,
+        options: { model?: string; input?: string; baseline?: boolean },
+      ) => {
+        const dryRun = process.env.CODER_DRY_RUN === "1";
+        const config = loadConfig();
+        const modelPath = options.model ?? config.default_model;
+
+        if (!modelPath && !dryRun) {
+          process.stderr.write(
+            "Error: no model specified. Use --model or set default_model in config\n",
+          );
+          process.exit(1);
+        }
+
+        const adaptorsDir = getAdaptorsDir();
+        const adaptorDir = join(adaptorsDir, name);
+
+        if (!existsSync(adaptorDir)) {
+          process.stderr.write(`Error: adaptor "${name}" not found\n`);
+          process.exit(1);
+        }
+
+        try {
+          const summary = await runEval(adaptorDir, {
+            modelPath: modelPath,
+            inputFile: options.input,
+            dryRun,
+          });
+
+          process.stdout.write(formatEvalTable(summary) + "\n");
+
+          const manifestPath = join(adaptorDir, "manifest.json");
+          updateManifestScore(manifestPath, summary.meanComposite, options.baseline ?? false);
+
+          const scoreField =
+            options.baseline === true ? "baseline_pass_rate" : "eval_pass_rate";
+          process.stdout.write(
+            `Updated ${scoreField}: ${summary.meanComposite.toFixed(3)}\n`,
+          );
+
+          logger.logEvent({
+            event: "eval_complete",
+            ts: new Date().toISOString(),
+            adaptor: name,
+            composite_score: summary.meanComposite,
+            tsc_score: summary.meanTsc,
+            eslint_score: summary.meanEslint,
+            test_score: summary.meanTests,
+            record_count: summary.records.length,
+          });
+        } catch (err) {
+          process.stderr.write(
+            `Error: ${err instanceof Error ? err.message : String(err)}\n`,
+          );
+          process.exit(1);
+        }
+      },
+    );
 
   return cmd;
 }

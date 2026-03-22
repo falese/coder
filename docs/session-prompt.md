@@ -19,9 +19,9 @@
 
 ### Active issue
 
-**[#7](https://github.com/falese/coder/issues/7) — Data: JSONL dataset curation pipeline**
+**[#9](https://github.com/falese/coder/issues/9) — Adaptor eval: quality scoring harness**
 
-Build the full pipeline in one session. All design decisions are resolved below — do not reopen.
+Build the full eval command in one session. All design decisions are resolved below — do not reopen.
 
 ### TDD instructions
 
@@ -42,101 +42,105 @@ Do not move to the next behaviour until the current test passes.
 ### Commands
 
 ```
-coder data ingest <glob>               # walk directory, output raw file contents as JSONL
-coder data extract --adaptor <name>    # extract prompt/completion pairs using adaptor's extract.json
-coder data deduplicate <file.jsonl>    # remove exact + near-duplicate records
-coder data validate <file.jsonl>       # check schema, filter malformed, report stats
-coder data split <file.jsonl>          # split into train.jsonl + eval.jsonl
-coder data stats <file.jsonl>          # report token counts, length distribution, duplicate rate
+coder adaptor eval <name>                # score with adaptor
+coder adaptor eval <name> --baseline     # score base model only — no adaptor
+coder adaptor eval <name> --input <file> # score a specific file
 ```
 
-All commands accept `--output <file>` to write results; default is stdout.
+`--baseline` is critical — it establishes `baseline_pass_rate` in `manifest.json` before training, so lift can be measured.
 
-### JSONL record format
+### Scoring dimensions
 
-```json
-{"prompt": "Create a debounced function", "completion": "export function debounce(...) { ... }"}
+Embedding similarity is **dropped from v1**. Do not implement it.
+
+| Dimension | Weight | Implementation |
+|---|---|---|
+| TypeScript type correctness | 0.35 | `tsc --noEmit --strict <file>` |
+| ESLint compliance | 0.30 | `eslint --format json <file>` |
+| Test pass rate | 0.35 | `bun test evals/eval_suite.ts` with `CODER_EVAL_OUTPUT` set |
+
+Composite = `0.35×tsc + 0.30×eslint + 0.35×tests`
+
+### Eval injection format
+
+For each eval record, the CLI:
+1. Generates output: `coder generate "<prompt>" [--adaptor <name>]`
+2. Writes output to a temp `.ts` file in OS temp dir
+3. Sets `CODER_EVAL_OUTPUT=<tempfile>`
+4. Runs `bun test evals/eval_suite.ts`
+5. Parses pass/fail count from bun output
+6. Deletes temp file (always — use try/finally)
+
+Adaptor authors write their eval suite like this:
+```typescript
+const generatedPath = process.env.CODER_EVAL_OUTPUT;
+if (!generatedPath) throw new Error("CODER_EVAL_OUTPUT not set");
+const { default: generated } = await import(generatedPath);
+// assertions against `generated` follow
 ```
 
-### `data ingest`
+### Scorer implementations
 
-- Walks a directory tree matching a glob (e.g. `src/**/*.ts`)
-- Outputs one JSONL record per file: `{"prompt": "<filename>", "completion": "<file contents>"}`
-- Skips binary files and files over 100KB
+**tsc scorer** (`src/eval/tsc.ts`):
+- Spawn `tsc --noEmit --strict <tempfile>`
+- Exit 0 = 1.0, non-zero = 0.0
+- Aggregate: mean across all eval records
 
-### `data extract`
+**ESLint scorer** (`src/eval/eslint.ts`):
+- Spawn `eslint --format json <tempfile>`
+- Use adaptor's `evals/.eslintrc.json` if present, else project default
+- Score per record = `1 - (errorCount / (errorCount + warningCount + 1))`
+- Aggregate: mean across all eval records
 
-- `--adaptor <name>` is **required** — exits with error if omitted
-- Reads `~/.coder/adaptors/<name>/extract.json` — exits with error if file not found
-- Applies rules from `extract.json` to each source file, outputs matching prompt/completion pairs
+**Test pass rate scorer** (`src/eval/tests.ts`):
+- Set `CODER_EVAL_OUTPUT`, spawn `bun test evals/eval_suite.ts`
+- Parse bun test output: `N pass` / `M fail`
+- Score per record = `passCount / (passCount + failCount)`
+- Aggregate: mean across all eval records
 
-#### `extract.json` format (Zod-validated)
+**Composite** (`src/eval/composite.ts`):
+- `0.35×tsc + 0.30×eslint + 0.35×tests`
 
-```json
-{
-  "rules": [
-    { "prompt": "jsdoc", "completion": "next_function" },
-    { "prompt": "line_comment", "completion": "next_block" }
-  ]
-}
+### manifest.json schema update
+
+Add `baseline_pass_rate` to the Zod schema in `src/adaptors/types.ts`:
+
+```typescript
+baseline_pass_rate: z.number().min(0).max(1).default(0),
+eval_pass_rate: z.number().min(0).max(1).default(0),
 ```
 
-#### Supported anchors
+`--baseline` writes `baseline_pass_rate`. Normal eval writes `eval_pass_rate`.
 
-| Anchor | Matches |
-|---|---|
-| `jsdoc` | `/** ... */` block immediately preceding a declaration |
-| `line_comment` | One or more `//` lines immediately preceding a block |
-| `next_function` | The `function`/`const`/`arrow` declaration + body that follows the prompt |
-| `next_block` | The next `{...}` block that follows the prompt |
+### Output format
 
-Rules are applied in order. A file section that matches multiple rules uses the first match. Sections with no match are skipped silently.
+```
+Eval: react-ts (with adaptor)
+────────────────────────────────────────────
+Record   tsc    eslint  tests  composite
+1        1.00   0.85    0.80   0.88
+2        0.00   0.70    0.60   0.43
+────────────────────────────────────────────
+Mean     0.72   0.81    0.74   0.76
+────────────────────────────────────────────
+eval_pass_rate: 0.76 written to manifest.json
+```
 
-### `data deduplicate`
+### Architecture
 
-- Removes exact duplicates (identical `prompt` + `completion` string)
-- Near-duplicate removal: Jaccard similarity on character trigrams, threshold configurable (default 0.85)
-- Reports removed count to stderr
-
-### `data validate`
-
-- Checks: non-empty `prompt`, non-empty `completion`, valid UTF-8, estimated token count ≤ 2048 (chars ÷ 4)
-- Filters out invalid records, writes valid records to output
-- Reports pass/fail counts and reasons to stderr
-
-### `data split`
-
-- Splits into `train.jsonl` (90%) and `eval.jsonl` (10%) by default
-- Deterministic: shuffle uses a configurable seed (default `42`)
-- `--train-ratio <0-1>` flag to override the 90/10 default
-- Writes two files: `<basename>.train.jsonl` and `<basename>.eval.jsonl` alongside the input file (or to `--output` dir)
-
-### `data stats`
-
-- Reports: record count, mean/p50/p95 prompt token length, mean/p50/p95 completion token length, exact duplicate rate
-- Output is human-readable text to stdout (not JSONL)
-
-### Architecture constraints
-
-- All pipeline stages are pure functions over JSONL — easy to test with fixture files
-- `data extract` reads adaptor path from `config.adaptors_dir` — no hardcoded paths
-- No `console.log` — use `logger` from `src/observability/logger.ts` for warnings
-- Each command lives in `src/commands/data.ts`, logic in `src/data/` modules
+- `src/eval/tsc.ts` — tsc scorer
+- `src/eval/eslint.ts` — eslint scorer
+- `src/eval/tests.ts` — bun test scorer
+- `src/eval/composite.ts` — aggregation + composite calculation
+- `src/commands/adaptor.ts` — add `eval` subcommand (already has list/install/info/update/remove)
+- No `console.log` — use `logger` from `src/observability/logger.ts`
+- `CODER_DRY_RUN=1` — skip generation and subprocess spawns, return mock scores of 0.5 for all dimensions
 
 ---
 
 ## Current file tree
 
 ```
-./CLAUDE.md
-./README.md
-./STATUS.md
-./bun.lock
-./bunfig.toml
-./docs/session-prompt.md
-./docs/spec.md
-./eslint.config.mjs
-./package.json
 ./src/adaptors/manager.ts
 ./src/adaptors/types.ts
 ./src/chat/history.ts
@@ -144,11 +148,19 @@ Rules are applied in order. A file section that matches multiple rules uses the 
 ./src/commands/adaptor.ts
 ./src/commands/chat.ts
 ./src/commands/config.ts
+./src/commands/data.ts
 ./src/commands/generate.ts
 ./src/commands/logs.ts
 ./src/commands/models.ts
 ./src/config/loader.ts
 ./src/config/types.ts
+./src/data/deduplicate.ts
+./src/data/extract.ts
+./src/data/ingest.ts
+./src/data/split.ts
+./src/data/stats.ts
+./src/data/types.ts
+./src/data/validate.ts
 ./src/inference/memory-gate.ts
 ./src/inference/mlx-runner.ts
 ./src/inference/types.ts
@@ -160,6 +172,7 @@ Rules are applied in order. A file section that matches multiple rules uses the 
 ./tests/integration/adaptors.test.ts
 ./tests/integration/chat.test.ts
 ./tests/integration/config.test.ts
+./tests/integration/data.test.ts
 ./tests/integration/generate-streaming.test.ts
 ./tests/integration/generate.test.ts
 ./tests/integration/logs.test.ts
@@ -167,31 +180,34 @@ Rules are applied in order. A file section that matches multiple rules uses the 
 ./tests/unit/adaptors-manager.test.ts
 ./tests/unit/chat-history.test.ts
 ./tests/unit/config-loader.test.ts
+./tests/unit/data-deduplicate.test.ts
+./tests/unit/data-extract.test.ts
+./tests/unit/data-ingest.test.ts
+./tests/unit/data-split.test.ts
+./tests/unit/data-stats.test.ts
+./tests/unit/data-types.test.ts
+./tests/unit/data-validate.test.ts
 ./tests/unit/logger.test.ts
 ./tests/unit/memory-gate.test.ts
 ./tests/unit/mlx-runner.test.ts
 ./tests/unit/models-inspector.test.ts
 ./tests/unit/pull.test.ts
-./tsconfig.json
 ```
 
 ---
 
 ## Existing tests (summary)
 
-143 tests passing across 15 files. Do not duplicate:
+213 tests passing across 23 files. Do not duplicate:
 
-- `parseMlxOutput`, `runMlxBuffered`, `runMlxStream`, `checkPreflight` — mlx subprocess layer
-- `loadConfig` / `setConfigValue` / `getConfigValue` — config reads/writes, env overrides
-- `Logger` — structured JSON log lines, log levels, file output
+- `runMlxBuffered`, `runMlxStream`, `checkPreflight` — mlx subprocess layer
+- `loadConfig` / `setConfigValue` / `getConfigValue` — config reads/writes
+- `Logger` — structured JSON log lines, log levels
 - `checkMemory` — memory gate refuse/warn logic
-- `streamFileToPath` — streaming file download with progress
-- `ModelInspector` — memory estimates, config parsing, model listing
-- `AdaptorManager` — manifest validation, install, list, info, update, remove
-- `ChatHistory` — conversation history, ChatML formatting, sliding window truncation
-- `coder generate` integration — buffered and streaming with `CODER_DRY_RUN=1`
-- `coder chat` integration
-- `coder config`, `coder models`, `coder adaptor`, `coder logs` integration
+- `AdaptorManager` — manifest validation (Zod), install, list, info, update, remove
+- `ChatHistory` — conversation history, ChatML formatting, sliding window
+- `data ingest/extract/deduplicate/validate/split/stats` — full data pipeline
+- `coder generate`, `coder chat`, `coder config`, `coder models`, `coder adaptor`, `coder data` integration
 
 ---
 
@@ -199,9 +215,9 @@ Rules are applied in order. A file section that matches multiple rules uses the 
 
 All resolved — do not reopen.
 
-- **`data extract` pattern format:** Structured rules with named anchors (`jsdoc`, `line_comment`, `next_function`, `next_block`) in `extract.json`
-- **`extract.json` location:** Adaptor pack root (`~/.coder/adaptors/<name>/extract.json`), separate from `manifest.json`
-- **Fallback when no adaptor/extract.json:** `--adaptor` flag is required; missing `extract.json` is a hard error
-- **Deduplication algorithm:** Jaccard similarity on character trigrams, threshold 0.85, configurable
-- **Token estimation:** character count ÷ 4 (same heuristic used in `ChatHistory`)
-- **Split ratio:** 90/10 default, `--train-ratio` flag to override, seed 42 default
+- **Embedding similarity:** dropped from v1. Composite = tsc + eslint + tests only. Weights: 0.35 / 0.30 / 0.35.
+- **`--baseline` flag:** same eval, no `--adaptor` passed to generation. Writes `baseline_pass_rate` not `eval_pass_rate`.
+- **Eval injection:** `CODER_EVAL_OUTPUT` env var pointing to temp file. Always cleaned up in try/finally.
+- **ESLint config:** use adaptor's `evals/.eslintrc.json` if present, else project default.
+- **Dry-run:** skip all subprocess spawns, return 0.5 for all dimensions.
+- **manifest.json:** `baseline_pass_rate` added to Zod schema alongside existing `eval_pass_rate`.

@@ -8,8 +8,8 @@ Local AI code generation using MLX on Apple Silicon.
 
 `coder` is a CLI tool for running quantized 7B code models entirely on your Mac — no cloud, no usage costs, no data leaving your machine. The long-term goal is a community marketplace of LoRA adaptor packs: domain expert teams build and publish fine-tuned adaptors for React/TypeScript, GraphQL, or any codebase pattern, and any engineer can pull an adaptor and generate code that adheres to that domain's architecture and quality standards.
 
-> **Status: ~70% of planned features**
-> `coder generate`, `coder chat`, `coder config`, `coder models`, `coder adaptor`, and `coder logs` work today. Data pipeline, adaptor training/eval, and the marketplace are on the roadmap. See [STATUS.md](./STATUS.md) and [open issues](https://github.com/falese/coder/issues).
+> **Status: ~90% of planned features**
+> `coder generate`, `coder chat`, `coder config`, `coder models`, `coder adaptor` (including `eval`), `coder data`, and `coder logs` all work today. Domain adaptor packs (React/TS, GraphQL) and the marketplace are on the roadmap. See [STATUS.md](./STATUS.md) and [open issues](https://github.com/falese/coder/issues).
 
 ---
 
@@ -148,9 +148,17 @@ coder adaptor install <name> --from-git <url>  # clone + validate from git
 coder adaptor info <name>                       # show manifest + eval scores
 coder adaptor update <name>                     # git pull in adaptor directory
 coder adaptor remove <name>                     # delete adaptor directory
+coder adaptor train --config <path>            # run LoRA fine-tuning
+coder adaptor eval <name>                       # score with adaptor (writes eval_pass_rate)
+coder adaptor eval <name> --baseline           # score base model only (writes baseline_pass_rate)
+coder adaptor eval <name> --input <file>       # score against a specific eval JSONL
 ```
 
 Adaptors are stored under `adaptors_dir` (default `~/.coder/adaptors/<name>/`). Each adaptor pack contains weights, training data, an eval suite, a system prompt, and a `manifest.json` validated against the Zod schema on install.
+
+The `train` subcommand reads a TOML config file (see [docs/data-pipeline.md](./docs/data-pipeline.md) for the full end-to-end workflow), generates the YAML config required by `mlx_lm.lora`, streams training loss to a per-run log file, auto-resumes from a checkpoint if one exists, and bumps the manifest patch version on completion.
+
+The `eval` subcommand generates output for each prompt in the adaptor's `data/eval.jsonl`, scores it with `tsc --noEmit` (40%), `eslint` (30%), and `bun test evals/eval_suite.ts` (30%), prints a per-record table, and writes the composite score to `manifest.json`. Use `--baseline` to score the base model before training and establish a `baseline_pass_rate` for comparison.
 
 ### `coder logs`
 
@@ -229,7 +237,7 @@ bun src/cli/index.ts logs
 
 # 11. Run the full test suite
 bun test
-# Expected: 143 pass, 0 fail
+# Expected: 271 pass, 0 fail
 ```
 
 ---
@@ -270,7 +278,7 @@ Without `--stream`, output is buffered until generation finishes. Add `--stream`
 ## Development
 
 ```bash
-bun test                    # all 143 tests
+bun test                    # all 250 tests
 bun test tests/unit         # unit tests only
 bun test tests/integration  # integration tests only
 bun run build               # tsc --noEmit
@@ -305,6 +313,6 @@ All code is written test-first. No implementation without a failing test first.
 
 See [STATUS.md](./STATUS.md) for progress against the spec and [open issues](https://github.com/falese/coder/issues) for the full backlog.
 
-**Completed:** config (#5), model management (#3), generate streaming + TTFT (#2), observability (#10), memory safety gate (#15), preflight check (#17), adaptor install/list/update/info/remove (#6), chat REPL (#4), CI workflow (#13), data pipeline (#7).
+**Completed:** config (#5), model management (#3), generate streaming + TTFT (#2), observability (#10), memory safety gate (#15), preflight check (#17), adaptor install/list/update/info/remove (#6), chat REPL (#4), CI workflow (#13), data pipeline (#7), adaptor train (#8), adaptor eval (#9).
 
-**Next up:** adaptor train (#8) → adaptor eval (#9).
+**Next up:** React/TS adaptor pack (#11).

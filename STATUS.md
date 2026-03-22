@@ -1,6 +1,6 @@
 # Coder — Project Status
 
-> Last updated: 2026-03-21
+> Last updated: 2026-03-22
 
 ---
 
@@ -12,10 +12,10 @@ The base prompt defines seven objectives. Status tracked below.
 |---|---|---|---|
 | 1 | CLI framework | ✅ Done | `generate` (buffered + streaming), `chat`, `config`, `models`, `adaptor`, `logs` all working |
 | 2 | Model management | ✅ Done | `models list/pull/info/remove` + memory safety gate (refuse >18 GB, warn <2 GB headroom) |
-| 3 | LoRA adaptor framework | 🟡 In progress | `adaptor install/list/update/info/remove` done; `--adaptor` flag wired; training/eval not yet built |
+| 3 | LoRA adaptor framework | ✅ Done | `adaptor install/list/update/info/remove/train/eval` done; `--adaptor` flag wired; composite quality scorer built |
 | 4 | Dataset curation tooling | ✅ Done | `data ingest/extract/deduplicate/validate/split/stats` |
-| 5 | Adaptor training pipeline | 🔴 Not started | No `mlx_lm.lora` wrapper |
-| 6 | Quality scoring and eval harness | 🔴 Not started | No scorer, no eval suite runner |
+| 5 | Adaptor training pipeline | ✅ Done | `coder adaptor train --config <path>` with loss streaming, checkpoint resumption, manifest version bump |
+| 6 | Quality scoring and eval harness | ✅ Done | `coder adaptor eval <name>` — tsc/eslint/bun-test composite scorer; `--baseline` flag; `eval_complete` observability event |
 | 7 | Observability | ✅ Done | Structured JSON logger, TTFT, tok/s, `coder logs` command |
 
 ### What is implemented
@@ -34,6 +34,7 @@ The base prompt defines seven objectives. Status tracked below.
 - `coder config set/get/show` — reads/writes `~/.coder/config.toml` via smol-toml; env overrides; XDG-aware path; `~` expansion
 - `coder models list/pull/info/remove` — HuggingFace HTTP download (streaming to disk with progress), memory estimates
 - `coder adaptor list/install/info/update/remove` — git-based install, Zod manifest validation, adaptors_dir management
+- `coder adaptor eval <name> [--baseline] [--input <file>]` — generates output for each eval prompt, scores via tsc/eslint/bun-test (weights 0.4/0.3/0.3), prints table, writes `eval_pass_rate` (or `baseline_pass_rate`) to manifest; `CODER_DRY_RUN=1` returns 0.5 for all dimensions
 - `coder logs` — streams `~/.coder/logs/coder.log` to stdout
 - `coder data ingest <glob>` — walks source files, one JSONL record per file (skips binary + >100KB)
 - `coder data extract --adaptor <name>` — applies `extract.json` rules (jsdoc/line_comment anchors → next_function/next_block completions)
@@ -41,19 +42,18 @@ The base prompt defines seven objectives. Status tracked below.
 - `coder data validate <file>` — gates non-empty fields and ≤2048 token limit (chars/4)
 - `coder data split <file>` — Fisher-Yates deterministic shuffle (seed 42), 90/10 train/eval split
 - `coder data stats <file>` — count, mean/p50/p95 token lengths, duplicate rate
+- `coder adaptor train --config <path>` — LoRA fine-tuning via `mlx_lm.lora`; Zod-validated TOML config; auto-generates YAML for LoRA hyperparams; streams loss lines to training log; checkpoint resumption (auto-detects `adaptor.safetensors`); bumps manifest patch version on completion; `training_step` + `training_complete` observability events
 - Memory safety gate — `modelDiskBytes × 1.2 + adaptorBytes`; refuses >18 GB, warns <2 GB headroom; bypassed by `CODER_DRY_RUN=1`
 - Preflight check — verifies `python3` and `mlx_lm` present before first subprocess spawn; cached per process
 - Structured JSON logger — `generation_start` / `generation_complete` events (TTFT, tok/s) to `~/.coder/logs/coder.log`
-- 213 tests (unit + integration), `tsc --noEmit` clean, ESLint clean
+- 271 tests (unit + integration), `tsc --noEmit` clean, ESLint clean
 
 ### What does not exist yet
 
-- LoRA adaptor training (`mlx_lm.lora` wrapper — `adaptor train` command)
-- Adaptor eval harness (`adaptor eval` command, quality composite score)
-- CI/GitHub Actions workflow (#13)
 - Performance benchmark harness (#14)
+- Domain adaptor packs: React/TS (#11), GraphQL (#12)
 
-**Rough completion: ~70% of the full platform.**
+**Rough completion: ~90% of the full platform.**
 
 ---
 
@@ -81,7 +81,7 @@ The base prompt defines seven objectives. Status tracked below.
 
 | Issue | Title | Status |
 |---|---|---|
-| [#13](https://github.com/falese/coder/issues/13) | CI: GitHub Actions workflow | 🔴 Open |
+| [#13](https://github.com/falese/coder/issues/13) | CI: GitHub Actions workflow | ✅ Done |
 | [#14](https://github.com/falese/coder/issues/14) | Perf: benchmark harness | 🔴 Open |
 
 ### Phase 4 — Adaptor platform
@@ -89,14 +89,14 @@ The base prompt defines seven objectives. Status tracked below.
 | Issue | Title | Status |
 |---|---|---|
 | [#7](https://github.com/falese/coder/issues/7) | Data: JSONL curation pipeline | ✅ Done |
-| [#8](https://github.com/falese/coder/issues/8) | Adaptor train: LoRA training pipeline | 🔴 Open |
-| [#9](https://github.com/falese/coder/issues/9) | Adaptor eval: quality scoring harness | 🔴 Open — needs design decisions (see below) |
+| [#8](https://github.com/falese/coder/issues/8) | Adaptor train: LoRA training pipeline | ✅ Done |
+| [#9](https://github.com/falese/coder/issues/9) | Adaptor eval: quality scoring harness | ✅ Done |
 
 ### Phase 5 — Domain adaptor packs
 
 | Issue | Title | Status |
 |---|---|---|
-| [#11](https://github.com/falese/coder/issues/11) | React/TS adaptor pack | 🔴 Blocked by Phase 4 |
+| [#11](https://github.com/falese/coder/issues/11) | React/TS adaptor pack | 🔴 Open |
 | [#12](https://github.com/falese/coder/issues/12) | GraphQL adaptor pack | 🔴 Blocked by #11 |
 | [#16](https://github.com/falese/coder/issues/16) | Adaptor registry protocol (design spike) | 🔴 Open — design only |
 
@@ -104,21 +104,7 @@ The base prompt defines seven objectives. Status tracked below.
 
 ## Items needing further definition
 
-### 🔴 High priority — blocks implementation
-
-#### #7 Data: `data extract` heuristics
-The heuristic for splitting source files into prompt/completion pairs is completely unspecified. Needs a DSL defined in each adaptor's `prompts/system.md` specifying extraction patterns (e.g. JSDoc comment → function body). **Design spike required before #7 can proceed.**
-
-#### #9 Adaptor eval: embedding similarity scorer
-Recommendation: drop from v1. Composite score = tsc + eslint + test pass rate only (renormalise weights). TF-IDF similarity of code is a weak signal and not worth the implementation cost.
-
-#### #9 Adaptor eval: eval suite injection format
-How generated code is injected into `evals/eval_suite.ts` needs a concrete spec. Resolved in spec.md: write generated output to a temp file, set `CODER_EVAL_OUTPUT` env var, run `bun test evals/eval_suite.ts`. **This format must be documented for adaptor authors before #9, #11, or #12 can proceed.**
-
-### 🟡 Medium priority
-
-#### #8 Adaptor train: checkpoint resumption
-Automatic — pass `--resume-adapter-file` when `weights/adaptor.safetensors` exists. No `--resume` flag needed from user. (Resolved in spec.md.)
+All Phase 4 design decisions are resolved. Remaining open items relate to Phase 5 domain adaptor packs.
 
 ---
 
@@ -144,12 +130,10 @@ Automatic — pass `--resume-adapter-file` when `weights/adaptor.safetensors` ex
 #8 adaptor train
   └── depends on: #6 ✅, #7
 
-#9 adaptor eval
-  └── depends on: #6 ✅, #8
-  └── needs: eval suite format defined, embedding scorer decision
+#9 adaptor eval ✅
 
 #11 react-ts adaptor
-  └── depends on: #7, #8, #9
+  └── depends on: #7 ✅, #8 ✅, #9 ✅
 
 #12 graphql adaptor
   └── depends on: #11
