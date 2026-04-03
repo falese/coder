@@ -30,12 +30,12 @@ Run quantized 7B code models entirely on your Mac — no cloud, no usage costs, 
 
 ```mermaid
 graph LR
-    A["<b>Prompt</b><br/>coder generate &quot;…&quot;"] --> B["<b>Memory Gate</b><br/>≤ 18 GB check"]
-    B --> C["<b>MLX Engine</b><br/>mlx_lm subprocess"]
-    C --> D["<b>Output</b><br/>stdout / file / pipe"]
+    A["Prompt<br/>coder generate"] --> B["Memory Gate<br/>18 GB check"]
+    B --> C["MLX Engine<br/>mlx_lm subprocess"]
+    C --> D["Output<br/>stdout / file / pipe"]
 
-    E["<b>LoRA Adaptor</b><br/>--adaptor react-ts"] -.-> C
-    F["<b>Context Files</b><br/>--context src/*.ts"] -.-> A
+    E["LoRA Adaptor<br/>--adaptor react-ts"] -.-> C
+    F["Context Files<br/>--context src/*.ts"] -.-> A
 
     style A fill:#4A90D9,color:#fff,stroke:none
     style B fill:#D4A84B,color:#fff,stroke:none
@@ -215,7 +215,7 @@ The `train` subcommand reads a TOML config file (see [docs/data-pipeline.md](./d
 graph TD
     A["train-config.toml"] --> B["coder adaptor train"]
     B --> C["mlx_lm.lora subprocess"]
-    C --> D{"Checkpoint<br/>exists?"}
+    C --> D{"Checkpoint exists?"}
     D -- Yes --> E["Resume from checkpoint"]
     D -- No --> F["Train from scratch"]
     E --> G["adaptor.safetensors"]
@@ -282,7 +282,7 @@ graph LR
     B --> C["deduplicate"]
     C --> D["validate"]
     D --> E["split"]
-    E --> F["train.jsonl<br/>+ eval.jsonl"]
+    E --> F["train.jsonl + eval.jsonl"]
 
     style A fill:#4A90D9,color:#fff,stroke:none
     style B fill:#5B9FD9,color:#fff,stroke:none
