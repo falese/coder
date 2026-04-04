@@ -2,7 +2,7 @@
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["eslint.config.mjs", "adaptors/**"] },
+  { ignores: ["eslint.config.mjs", "adaptors/**", ".coder-eval-tmp/**"] },
   ...tseslint.configs.strictTypeChecked,
   {
   languageOptions: {
