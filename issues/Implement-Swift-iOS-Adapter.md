@@ -1,0 +1,2 @@
+---
+title: 'Implement Swift iOS Adapter'\ndescription: 'Create a Swift adapter pack to use with Coder. The adapter should be trained on high-quality data. Examples should include:\n- Implementation of user experience\n- API calls\n- Integration with iOS'\nlabels: ['enhancement']\ncreated_at: '2026-04-04 14:50:01'\n---\n
