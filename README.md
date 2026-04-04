@@ -30,19 +30,19 @@ Run quantized 7B code models entirely on your Mac — no cloud, no usage costs, 
 
 ```mermaid
 graph LR
-    A["Prompt<br/>coder generate"] --> B["Memory Gate<br/>18 GB check"]
-    B --> C["MLX Engine<br/>mlx_lm subprocess"]
-    C --> D["Output<br/>stdout / file / pipe"]
+    A["coder generate"] --> B["Memory Gate — 18 GB"]
+    B --> C["MLX Engine — mlx_lm"]
+    C --> D["stdout / file / pipe"]
 
-    E["LoRA Adaptor<br/>--adaptor react-ts"] -.-> C
-    F["Context Files<br/>--context src/*.ts"] -.-> A
+    E["LoRA Adaptor"] -.-> C
+    F["Context Files"] -.-> A
 
-    style A fill:#4A90D9,color:#fff,stroke:none
-    style B fill:#D4A84B,color:#fff,stroke:none
-    style C fill:#7B68EE,color:#fff,stroke:none
-    style D fill:#50C878,color:#fff,stroke:none
-    style E fill:#E8E8E8,color:#333,stroke:#999,stroke-dasharray:5 5
-    style F fill:#E8E8E8,color:#333,stroke:#999,stroke-dasharray:5 5
+    style A fill:#4A90D9,color:#fff,stroke-width:0
+    style B fill:#D4A84B,color:#fff,stroke-width:0
+    style C fill:#7B68EE,color:#fff,stroke-width:0
+    style D fill:#50C878,color:#fff,stroke-width:0
+    style E fill:#E8E8E8,color:#333,stroke:#999,stroke-dasharray:5
+    style F fill:#E8E8E8,color:#333,stroke:#999,stroke-dasharray:5
 ```
 
 ---
@@ -223,11 +223,11 @@ graph TD
     G --> H["Bump manifest version"]
 
     style A fill:#F5F5F5,color:#333,stroke:#CCC
-    style B fill:#4A90D9,color:#fff,stroke:none
-    style C fill:#7B68EE,color:#fff,stroke:none
-    style D fill:#D4A84B,color:#fff,stroke:none
-    style G fill:#50C878,color:#fff,stroke:none
-    style H fill:#50C878,color:#fff,stroke:none
+    style B fill:#4A90D9,color:#fff,stroke-width:0
+    style C fill:#7B68EE,color:#fff,stroke-width:0
+    style D fill:#D4A84B,color:#fff,stroke-width:0
+    style G fill:#50C878,color:#fff,stroke-width:0
+    style H fill:#50C878,color:#fff,stroke-width:0
 ```
 
 </details>
@@ -284,12 +284,12 @@ graph LR
     D --> E["split"]
     E --> F["train.jsonl + eval.jsonl"]
 
-    style A fill:#4A90D9,color:#fff,stroke:none
-    style B fill:#5B9FD9,color:#fff,stroke:none
-    style C fill:#6CAED9,color:#fff,stroke:none
-    style D fill:#D4A84B,color:#fff,stroke:none
-    style E fill:#7B68EE,color:#fff,stroke:none
-    style F fill:#50C878,color:#fff,stroke:none
+    style A fill:#4A90D9,color:#fff,stroke-width:0
+    style B fill:#5B9FD9,color:#fff,stroke-width:0
+    style C fill:#6CAED9,color:#fff,stroke-width:0
+    style D fill:#D4A84B,color:#fff,stroke-width:0
+    style E fill:#7B68EE,color:#fff,stroke-width:0
+    style F fill:#50C878,color:#fff,stroke-width:0
 ```
 
 The output of `coder data split` lands directly in the adaptor's `data/` directory, ready for `coder adaptor train`.
@@ -430,22 +430,21 @@ All code is written test-first. No implementation without a failing test first.
 See [STATUS.md](./STATUS.md) for progress against the spec and [open issues](https://github.com/falese/coder/issues) for the full backlog.
 
 ```mermaid
-%%{init: {'theme': 'neutral'}}%%
-timeline
-    title Milestone Progress
-    Completed : Config (#5)
-              : Model management (#3)
-              : Generate streaming + TTFT (#2)
-              : Observability (#10)
-              : Memory safety gate (#15)
-              : Preflight check (#17)
-              : Adaptor install/list/update (#6)
-              : Chat REPL (#4)
-              : CI workflow (#13)
-              : Data pipeline (#7)
-              : Adaptor train (#8)
-              : Adaptor eval (#9)
-    Next up   : React/TS adaptor pack (#11)
-    Future    : GraphQL adaptor pack (#12)
-              : Community marketplace
+graph LR
+    subgraph Completed["✅ Completed"]
+        c1["Config #5"] --> c2["Model management #3"] --> c3["Streaming + TTFT #2"] --> c4["Observability #10"] --> c5["Memory gate #15"]
+        c5 --> c6["Preflight #17"] --> c7["Adaptor install #6"] --> c8["Chat REPL #4"] --> c9["CI workflow #13"]
+        c9 --> c10["Data pipeline #7"] --> c11["Adaptor train #8"] --> c12["Adaptor eval #9"]
+    end
+    subgraph NextUp["🔜 Next Up"]
+        n1["React/TS adaptor pack #11"]
+    end
+    subgraph Future["🔮 Future"]
+        f1["GraphQL adaptor pack #12"] --> f2["Community marketplace"]
+    end
+    Completed --> NextUp --> Future
+
+    style Completed fill:#E8F5E9,stroke:#50C878,color:#333
+    style NextUp fill:#E3F2FD,stroke:#4A90D9,color:#333
+    style Future fill:#F5F5F5,stroke:#CCC,color:#333
 ```
