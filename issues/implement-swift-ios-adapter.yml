@@ -1,0 +1,9 @@
+---
+name: Implement Swift iOS Adapter
+body: |
+  Create a Swift adapter pack to use with Coder. The adapter should be trained on high-quality data. Examples should include:
+  - Implementation of user experience
+  - API calls
+  - Integration with iOS
+labels: [enhancement]
+---
