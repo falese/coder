@@ -430,22 +430,21 @@ All code is written test-first. No implementation without a failing test first.
 See [STATUS.md](./STATUS.md) for progress against the spec and [open issues](https://github.com/falese/coder/issues) for the full backlog.
 
 ```mermaid
-%%{init: {'theme': 'neutral'}}%%
-timeline
-    title Milestone Progress
-    Completed : Config (#5)
-              : Model management (#3)
-              : Generate streaming + TTFT (#2)
-              : Observability (#10)
-              : Memory safety gate (#15)
-              : Preflight check (#17)
-              : Adaptor install/list/update (#6)
-              : Chat REPL (#4)
-              : CI workflow (#13)
-              : Data pipeline (#7)
-              : Adaptor train (#8)
-              : Adaptor eval (#9)
-    Next up   : React/TS adaptor pack (#11)
-    Future    : GraphQL adaptor pack (#12)
-              : Community marketplace
+graph LR
+    subgraph Completed["✅ Completed"]
+        c1["Config #5"] --> c2["Model management #3"] --> c3["Streaming + TTFT #2"] --> c4["Observability #10"] --> c5["Memory gate #15"]
+        c5 --> c6["Preflight #17"] --> c7["Adaptor install #6"] --> c8["Chat REPL #4"] --> c9["CI workflow #13"]
+        c9 --> c10["Data pipeline #7"] --> c11["Adaptor train #8"] --> c12["Adaptor eval #9"]
+    end
+    subgraph NextUp["🔜 Next Up"]
+        n1["React/TS adaptor pack #11"]
+    end
+    subgraph Future["🔮 Future"]
+        f1["GraphQL adaptor pack #12"] --> f2["Community marketplace"]
+    end
+    Completed --> NextUp --> Future
+
+    style Completed fill:#E8F5E9,stroke:#50C878,color:#333
+    style NextUp fill:#E3F2FD,stroke:#4A90D9,color:#333
+    style Future fill:#F5F5F5,stroke:#CCC,color:#333
 ```
