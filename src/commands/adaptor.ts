@@ -10,6 +10,7 @@ import {
 import { loadTrainConfig } from "../training/config.js";
 import { runMlxTrain } from "../training/runner.js";
 import { runEval, formatEvalTable, formatEvalReport, updateManifestScore } from "../eval/runner.js";
+import { runSelfImprove } from "../adaptors/self-improve.js";
 import { logger } from "../observability/logger.js";
 import { join } from "node:path";
 import { existsSync, writeFileSync } from "node:fs";
@@ -213,6 +214,90 @@ export function createAdaptorCommand(): Command {
             test_score: summary.meanTests,
             record_count: summary.records.length,
           });
+        } catch (err) {
+          process.stderr.write(
+            `Error: ${err instanceof Error ? err.message : String(err)}\n`,
+          );
+          process.exit(1);
+        }
+      },
+    );
+
+  cmd
+    .command("self-improve <name>")
+    .description("recursively fine-tune an adaptor on its own high-scoring outputs")
+    .option("--rounds <n>", "SSD iterations to run", "3")
+    .option("--samples <k>", "completions per prompt per round", "8")
+    .option("--temperature <t>", "sampling temperature or 'adaptive'", "adaptive")
+    .option("--threshold <score>", "min composite score to keep a sample", "0.7")
+    .option("--model <path>", "base model path (falls back to config default_model)")
+    .option("--dry-run", "honour CODER_DRY_RUN=1; skip actual inference and training")
+    .action(
+      async (
+        name: string,
+        options: {
+          rounds: string;
+          samples: string;
+          temperature: string;
+          threshold: string;
+          model?: string;
+          dryRun?: boolean;
+        },
+      ) => {
+        const dryRun =
+          options.dryRun === true || process.env.CODER_DRY_RUN === "1";
+        const config = loadConfig();
+        const modelPath = options.model ?? config.default_model;
+
+        if (!modelPath && !dryRun) {
+          process.stderr.write(
+            "Error: no model specified. Use --model or set default_model in config\n",
+          );
+          process.exit(1);
+        }
+
+        const adaptorsDir = getAdaptorsDir();
+        const adaptorDir = join(adaptorsDir, name);
+
+        if (!existsSync(adaptorDir)) {
+          process.stderr.write(`Error: adaptor "${name}" not found\n`);
+          process.exit(1);
+        }
+
+        const temperature: number | "adaptive" =
+          options.temperature === "adaptive"
+            ? "adaptive"
+            : parseFloat(options.temperature);
+
+        try {
+          const results = await runSelfImprove({
+            adaptorDir,
+            modelPath,
+            rounds: parseInt(options.rounds, 10),
+            samplesPerPrompt: parseInt(options.samples, 10),
+            threshold: parseFloat(options.threshold),
+            temperature,
+            dryRun,
+          });
+
+          for (const r of results) {
+            const delta = r.scoreAfter - r.scoreBefore;
+            const sign = delta >= 0 ? "+" : "";
+            const tag = r.committed ? "[committed]" : "[rolled back]";
+            process.stderr.write(
+              `Round ${String(r.round)}/${String(results.length)}: ` +
+              `generated ${String(r.generated)}  filtered (≥${options.threshold}): ${String(r.filtered)}  ` +
+              `eval: ${r.scoreBefore.toFixed(3)} → ${r.scoreAfter.toFixed(3)} ` +
+              `(${sign}${delta.toFixed(3)})  ${tag}\n`,
+            );
+          }
+
+          const committed = results.filter((r) => r.committed).length;
+          const finalScore = results.at(-1)?.scoreAfter ?? 0;
+          process.stdout.write(
+            `Self-improvement complete. Final score: ${finalScore.toFixed(3)} ` +
+            `(rounds committed: ${String(committed)}/${String(results.length)})\n`,
+          );
         } catch (err) {
           process.stderr.write(
             `Error: ${err instanceof Error ? err.message : String(err)}\n`,

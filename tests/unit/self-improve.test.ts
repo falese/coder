@@ -1,0 +1,183 @@
+import {
+  describe,
+  test,
+  expect,
+  mock,
+  beforeEach,
+  afterEach,
+} from "bun:test";
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  existsSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { runSelfImprove } from "../../src/adaptors/self-improve.js";
+import type { EvalSummary } from "../../src/eval/runner.js";
+import type { SampleResult } from "../../src/inference/sampler.js";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function makeEvalSummary(meanComposite: number): EvalSummary {
+  return {
+    records: [],
+    meanTsc: meanComposite,
+    meanEslint: meanComposite,
+    meanTests: meanComposite,
+    meanComposite,
+  };
+}
+
+function makeAdaptorDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), "coder-ssd-test-"));
+  mkdirSync(join(dir, "data"), { recursive: true });
+  mkdirSync(join(dir, "weights"), { recursive: true });
+  writeFileSync(
+    join(dir, "data", "eval.jsonl"),
+    JSON.stringify({ prompt: "// write a button", completion: "const x = 1;" }) + "\n",
+  );
+  writeFileSync(
+    join(dir, "data", "train.jsonl"),
+    JSON.stringify({ prompt: "// existing", completion: "const y = 2;" }) + "\n",
+  );
+  writeFileSync(join(dir, "weights", "adapters.safetensors"), "stub\n");
+  return dir;
+}
+
+const PASSING_SAMPLE: SampleResult = {
+  prompt: "// write a button",
+  completion: "const x = 1;",
+  composite: 0.9,
+};
+
+const FAILING_SAMPLE: SampleResult = {
+  prompt: "// write a button",
+  completion: "bad code",
+  composite: 0.3,
+};
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe("runSelfImprove", () => {
+  let adaptorDir: string;
+
+  beforeEach(() => {
+    adaptorDir = makeAdaptorDir();
+  });
+
+  afterEach(() => {
+    rmSync(adaptorDir, { recursive: true, force: true });
+  });
+
+  test("commit path: scoreAfter > scoreBefore → committed: true, .bak deleted", async () => {
+    let evalCallCount = 0;
+    const mockEval = mock(() => {
+      evalCallCount++;
+      return Promise.resolve(makeEvalSummary(evalCallCount === 1 ? 0.7 : 0.9));
+    });
+    const mockSample = mock(() => Promise.resolve([PASSING_SAMPLE]));
+    const mockTrain = mock(() => Promise.resolve(undefined));
+
+    const results = await runSelfImprove(
+      { adaptorDir, modelPath: "/models/test", rounds: 1, samplesPerPrompt: 1, threshold: 0.7, temperature: 0.7, dryRun: false },
+      { evalFn: mockEval, sampleFn: mockSample, trainFn: mockTrain },
+    );
+
+    expect(results).toHaveLength(1);
+    expect(results[0].committed).toBe(true);
+    expect(results[0].scoreBefore).toBeCloseTo(0.7);
+    expect(results[0].scoreAfter).toBeCloseTo(0.9);
+    expect(results[0].filtered).toBe(1);
+    expect(existsSync(join(adaptorDir, "weights", "adapters.safetensors.bak"))).toBe(false);
+  });
+
+  test("rollback path: scoreAfter < scoreBefore → committed: false, checkpoint restored", async () => {
+    const originalContent = readFileSync(
+      join(adaptorDir, "weights", "adapters.safetensors"),
+      "utf-8",
+    );
+    let evalCallCount = 0;
+    const mockEval = mock(() => {
+      evalCallCount++;
+      return Promise.resolve(makeEvalSummary(evalCallCount === 1 ? 0.9 : 0.7));
+    });
+    const mockSample = mock(() => Promise.resolve([PASSING_SAMPLE]));
+    const mockTrain = mock(() => {
+      // Simulate training overwriting checkpoint
+      writeFileSync(join(adaptorDir, "weights", "adapters.safetensors"), "trained\n");
+      return Promise.resolve(undefined);
+    });
+
+    const results = await runSelfImprove(
+      { adaptorDir, modelPath: "/models/test", rounds: 1, samplesPerPrompt: 1, threshold: 0.7, temperature: 0.7, dryRun: false },
+      { evalFn: mockEval, sampleFn: mockSample, trainFn: mockTrain },
+    );
+
+    expect(results[0].committed).toBe(false);
+    expect(results[0].scoreBefore).toBeCloseTo(0.9);
+    expect(results[0].scoreAfter).toBeCloseTo(0.7);
+    const restoredContent = readFileSync(
+      join(adaptorDir, "weights", "adapters.safetensors"),
+      "utf-8",
+    );
+    expect(restoredContent).toBe(originalContent);
+    expect(existsSync(join(adaptorDir, "weights", "adapters.safetensors.bak"))).toBe(false);
+  });
+
+  test("zero passing samples: skip training, committed: false, filtered: 0", async () => {
+    const mockEval = mock(() => Promise.resolve(makeEvalSummary(0.8)));
+    const mockSample = mock(() => Promise.resolve([FAILING_SAMPLE]));
+    const mockTrain = mock(() => Promise.resolve(undefined));
+
+    const results = await runSelfImprove(
+      { adaptorDir, modelPath: "/models/test", rounds: 1, samplesPerPrompt: 1, threshold: 0.7, temperature: 0.7, dryRun: false },
+      { evalFn: mockEval, sampleFn: mockSample, trainFn: mockTrain },
+    );
+
+    expect(results[0].committed).toBe(false);
+    expect(results[0].filtered).toBe(0);
+    expect(results[0].generated).toBe(1);
+    expect(mockTrain).not.toHaveBeenCalled();
+  });
+
+  test("result array length equals opts.rounds", async () => {
+    const mockEval = mock(() => Promise.resolve(makeEvalSummary(0.8)));
+    const mockSample = mock(() => Promise.resolve([FAILING_SAMPLE]));
+    const mockTrain = mock(() => Promise.resolve(undefined));
+
+    const results = await runSelfImprove(
+      { adaptorDir, modelPath: "/models/test", rounds: 3, samplesPerPrompt: 1, threshold: 0.7, temperature: 0.7, dryRun: false },
+      { evalFn: mockEval, sampleFn: mockSample, trainFn: mockTrain },
+    );
+
+    expect(results).toHaveLength(3);
+    for (let i = 0; i < 3; i++) {
+      expect(results[i].round).toBe(i + 1);
+    }
+  });
+
+  test("adaptive temperature resolves to 0.7 for sampleFn", async () => {
+    const mockEval = mock(() => Promise.resolve(makeEvalSummary(0.8)));
+    const capturedTemps: number[] = [];
+    const mockSample = mock((_prompts: unknown, _k: unknown, temp: number) => {
+      capturedTemps.push(temp);
+      return Promise.resolve([FAILING_SAMPLE]);
+    });
+    const mockTrain = mock(() => Promise.resolve(undefined));
+
+    await runSelfImprove(
+      { adaptorDir, modelPath: "/models/test", rounds: 1, samplesPerPrompt: 1, threshold: 0.7, temperature: "adaptive", dryRun: false },
+      { evalFn: mockEval, sampleFn: mockSample, trainFn: mockTrain },
+    );
+
+    expect(capturedTemps[0]).toBe(0.7);
+  });
+});
