@@ -9,6 +9,8 @@ export interface GenerateOptions {
   contextFiles?: string[]; // prepend these files to the prompt
   systemFile?: string;     // path to system prompt file
   rawPrompt?: boolean;     // pass --ignore-chat-template (prompt is pre-formatted)
+  temperature?: number;    // forwarded as --temp; undefined → mlx_lm default (greedy / 0.0)
+  topP?: number;           // forwarded as --top-p; undefined → mlx_lm default
 }
 
 export interface GenerateResult {

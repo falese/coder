@@ -171,6 +171,50 @@ describe("runMlxBuffered", () => {
       spy.mockRestore();
     }
   });
+
+  test("forwards --temp when temperature is set", async () => {
+    const spy = spyOn(Bun, "spawn").mockReturnValue(
+      makeMockProcess("==========\nresult\n==========\n", "", 0) as ReturnType<typeof Bun.spawn>,
+    );
+    try {
+      await runMlxBuffered({ model: "/models/test", prompt: "test", temperature: 0.7 });
+      const args: string[] = spy.mock.calls[0]?.[0];
+      const idx = args.indexOf("--temp");
+      expect(idx).toBeGreaterThan(-1);
+      expect(args[idx + 1]).toBe("0.7");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("forwards --top-p when topP is set", async () => {
+    const spy = spyOn(Bun, "spawn").mockReturnValue(
+      makeMockProcess("==========\nresult\n==========\n", "", 0) as ReturnType<typeof Bun.spawn>,
+    );
+    try {
+      await runMlxBuffered({ model: "/models/test", prompt: "test", topP: 0.9 });
+      const args: string[] = spy.mock.calls[0]?.[0];
+      const idx = args.indexOf("--top-p");
+      expect(idx).toBeGreaterThan(-1);
+      expect(args[idx + 1]).toBe("0.9");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("omits --temp and --top-p when neither is set", async () => {
+    const spy = spyOn(Bun, "spawn").mockReturnValue(
+      makeMockProcess("==========\nresult\n==========\n", "", 0) as ReturnType<typeof Bun.spawn>,
+    );
+    try {
+      await runMlxBuffered({ model: "/models/test", prompt: "test" });
+      const args: string[] = spy.mock.calls[0]?.[0];
+      expect(args).not.toContain("--temp");
+      expect(args).not.toContain("--top-p");
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

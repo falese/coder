@@ -104,6 +104,12 @@ function buildSpawnArgs(options: GenerateOptions): string[] {
   if (options.rawPrompt === true) {
     args.push("--ignore-chat-template");
   }
+  if (options.temperature !== undefined) {
+    args.push("--temp", String(options.temperature));
+  }
+  if (options.topP !== undefined) {
+    args.push("--top-p", String(options.topP));
+  }
   return args;
 }
 
