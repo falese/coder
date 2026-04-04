@@ -30,19 +30,19 @@ Run quantized 7B code models entirely on your Mac — no cloud, no usage costs, 
 
 ```mermaid
 graph LR
-    A["Prompt<br/>coder generate"] --> B["Memory Gate<br/>18 GB check"]
-    B --> C["MLX Engine<br/>mlx_lm subprocess"]
-    C --> D["Output<br/>stdout / file / pipe"]
+    A["coder generate"] --> B["Memory Gate — 18 GB"]
+    B --> C["MLX Engine — mlx_lm"]
+    C --> D["stdout / file / pipe"]
 
-    E["LoRA Adaptor<br/>--adaptor react-ts"] -.-> C
-    F["Context Files<br/>--context src/*.ts"] -.-> A
+    E["LoRA Adaptor"] -.-> C
+    F["Context Files"] -.-> A
 
-    style A fill:#4A90D9,color:#fff,stroke:none
-    style B fill:#D4A84B,color:#fff,stroke:none
-    style C fill:#7B68EE,color:#fff,stroke:none
-    style D fill:#50C878,color:#fff,stroke:none
-    style E fill:#E8E8E8,color:#333,stroke:#999,stroke-dasharray:5 5
-    style F fill:#E8E8E8,color:#333,stroke:#999,stroke-dasharray:5 5
+    style A fill:#4A90D9,color:#fff,stroke-width:0
+    style B fill:#D4A84B,color:#fff,stroke-width:0
+    style C fill:#7B68EE,color:#fff,stroke-width:0
+    style D fill:#50C878,color:#fff,stroke-width:0
+    style E fill:#E8E8E8,color:#333,stroke:#999,stroke-dasharray:5
+    style F fill:#E8E8E8,color:#333,stroke:#999,stroke-dasharray:5
 ```
 
 ---
@@ -223,11 +223,11 @@ graph TD
     G --> H["Bump manifest version"]
 
     style A fill:#F5F5F5,color:#333,stroke:#CCC
-    style B fill:#4A90D9,color:#fff,stroke:none
-    style C fill:#7B68EE,color:#fff,stroke:none
-    style D fill:#D4A84B,color:#fff,stroke:none
-    style G fill:#50C878,color:#fff,stroke:none
-    style H fill:#50C878,color:#fff,stroke:none
+    style B fill:#4A90D9,color:#fff,stroke-width:0
+    style C fill:#7B68EE,color:#fff,stroke-width:0
+    style D fill:#D4A84B,color:#fff,stroke-width:0
+    style G fill:#50C878,color:#fff,stroke-width:0
+    style H fill:#50C878,color:#fff,stroke-width:0
 ```
 
 </details>
@@ -284,12 +284,12 @@ graph LR
     D --> E["split"]
     E --> F["train.jsonl + eval.jsonl"]
 
-    style A fill:#4A90D9,color:#fff,stroke:none
-    style B fill:#5B9FD9,color:#fff,stroke:none
-    style C fill:#6CAED9,color:#fff,stroke:none
-    style D fill:#D4A84B,color:#fff,stroke:none
-    style E fill:#7B68EE,color:#fff,stroke:none
-    style F fill:#50C878,color:#fff,stroke:none
+    style A fill:#4A90D9,color:#fff,stroke-width:0
+    style B fill:#5B9FD9,color:#fff,stroke-width:0
+    style C fill:#6CAED9,color:#fff,stroke-width:0
+    style D fill:#D4A84B,color:#fff,stroke-width:0
+    style E fill:#7B68EE,color:#fff,stroke-width:0
+    style F fill:#50C878,color:#fff,stroke-width:0
 ```
 
 The output of `coder data split` lands directly in the adaptor's `data/` directory, ready for `coder adaptor train`.
