@@ -1,0 +1,9 @@
+{
+  "rules": [
+    { "prompt": "react_component", "completion": "next_block" },
+    { "prompt": "jsdoc", "completion": "next_function" },
+    { "prompt": "jsdoc", "completion": "constructor_call" },
+    { "prompt": "ts_declare", "completion": "declare_body" },
+    { "prompt": "line_comment", "completion": "next_function" }
+  ]
+}

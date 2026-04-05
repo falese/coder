@@ -1,0 +1,13 @@
+{
+  "name": "react-ts-v2",
+  "version": "2.0.0",
+  "domain": "frontend",
+  "base_model": "Qwen2.5-Coder-7B",
+  "mlx_quant": "4bit",
+  "lora_rank": 8,
+  "min_memory_gb": 18,
+  "eval_pass_rate": 0.0,
+  "baseline_pass_rate": 0.0,
+  "author": "",
+  "description": "React TypeScript + MUI + Module Federation patterns — v2 dataset (toolpad, react-admin, mui/docs; react_component anchor; ~500+ training records)"
+}
