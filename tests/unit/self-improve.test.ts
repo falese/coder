@@ -311,4 +311,24 @@ describe("runSelfImprove", () => {
       logSpy.mockRestore();
     }
   });
+
+  test("manifest version bumped by number of committed rounds", async () => {
+    let evalCallCount = 0;
+    const mockEval = mock(() => {
+      evalCallCount++;
+      return Promise.resolve(
+        makeEvalSummaryWithRecord("// write a button", evalCallCount === 1 ? 0.7 : 0.9),
+      );
+    });
+    const mockSample = mock(() => Promise.resolve([PASSING_SAMPLE]));
+    const mockTrain = mock(() => Promise.resolve(undefined));
+
+    await runSelfImprove(
+      { adaptorDir, modelPath: "/models/test", rounds: 1, samplesPerPrompt: 1, threshold: 0.7, temperature: 0.7, dryRun: false },
+      { evalFn: mockEval, sampleFn: mockSample, trainFn: mockTrain },
+    );
+
+    const manifest = JSON.parse(readFileSync(join(adaptorDir, "manifest.json"), "utf-8")) as Record<string, unknown>;
+    expect(manifest.version).toBe("1.0.1");
+  });
 });

@@ -41,11 +41,11 @@ bun run generate      # coder generate (dev)
 - All file I/O paths resolve through config (`~/.coder/config.toml`) — no hardcoded paths
 - Dry-run mode via `CODER_DRY_RUN=1` must remain functional at all times
 
-## Current state (2026-03-21)
+## Current state (2026-04-04)
 
-Foundation + core UX (~40%). What exists:
+Core platform + SSD self-improvement (~65%). What exists:
 
-- `coder generate "<prompt>" [--model <path>]` — buffered and streaming (`--stream`); `--model` optional when `default_model` set in config
+- `coder generate "<prompt>" [--model <path>]` — buffered and streaming (`--stream`); `--temp`/`--top-p` forwarded to mlx_lm
   - `--stream` — streams via Bun `ReadableStream`; TTFT measured from spawn to first chunk
   - `--adaptor <name>` — resolves to `adaptors_dir/<name>`, passes path to mlx_lm
   - `-o <file>` — writes output to file
@@ -58,9 +58,16 @@ Foundation + core UX (~40%). What exists:
 - `loadConfig`, `setConfigValue`, `getConfigValue` — config with env overrides, `~` expansion
 - Memory safety gate — `checkMemory` enforces 18 GB limit before every generation
 - Structured JSON logger — `generation_start`/`generation_complete` events with TTFT + tok/s
-- 93 tests passing, tsc clean, eslint clean
+- `coder adaptor list/install/update/remove/info/train/eval/self-improve` — full adaptor lifecycle
+  - `self-improve` — SSD loop: sample → filter → retrain → gate → commit/rollback, N rounds
+  - Adaptive per-prompt temperature (0.3/0.7/1.0 based on per-prompt composite)
+  - Checkpoint rollback on score regression; manifest version bump + history on commit
+  - 4 structured log events: `self_improve_round_start/sample/round_end/complete`
+- `coder data ingest/extract/deduplicate/validate/split/stats` — full JSONL data pipeline
+- `sampleCompletions` — scored multi-sample generator (K completions × prompts, TSC+ESLint+tests scored)
+- ~320 tests passing, tsc clean, eslint clean
 
-What does NOT exist yet: `chat`, `adaptor install/train/eval`, `data` commands.
+What does NOT exist yet: `coder chat`.
 
 ## Resolved decisions — do not reopen
 
@@ -73,6 +80,8 @@ What does NOT exist yet: `chat`, `adaptor install/train/eval`, `data` commands.
 - **Unknown config keys:** silently ignored on load, rejected with error on `config set`
 - **Config missing on first run:** create with defaults silently, no error
 - **TOML parser:** `smol-toml` (pure TS, no native deps)
+- **SSD temperature:** adaptive per-prompt schedule (≥0.9→0.3, 0.5–0.9→0.7, <0.5→1.0); fixed number disables adaptive
+- **SSD version bump:** patch version incremented by committed round count after each `self-improve` run
 
 ## Backlog priority order
 
@@ -80,12 +89,15 @@ What does NOT exist yet: `chat`, `adaptor install/train/eval`, `data` commands.
 2. ~~#3 Models~~ ✅ done
 3. ~~#2 + #10 Generate streaming + Observability~~ ✅ done
 4. ~~#15 Memory safety gate~~ ✅ done
-5. #4 Chat REPL
-6. #6 Adaptor install/list/update
-7. #7 Data JSONL pipeline (design spike first)
-8. #8 Adaptor train
-9. #9 Adaptor eval
-10. #11 React/TS adaptor pack
-11. #12 GraphQL adaptor pack
+5. ~~#6 Adaptor install/list/update/train/eval~~ ✅ done
+6. ~~#7 Data JSONL pipeline~~ ✅ done
+7. ~~#29 temperature/top-p passthrough~~ ✅ done
+8. ~~#30 sampleCompletions~~ ✅ done
+9. ~~#31 coder adaptor self-improve (SSD orchestrator)~~ ✅ done
+10. ~~#32 adaptive per-prompt temperature~~ ✅ done
+11. ~~#33 self_improve_* log events + manifest history~~ ✅ done
+12. #4 Chat REPL
+13. #11 React/TS adaptor pack
+14. #12 GraphQL adaptor pack
 
 For the current session's issue and full context: @docs/session-prompt.md

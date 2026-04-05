@@ -278,11 +278,18 @@ export async function runSelfImprove(
     }
   }
 
-  // Write manifest history fields
+  const roundsCommitted = results.filter((r) => r.committed).length;
+
+  // Write manifest history fields and bump patch version for committed rounds
   const manifestPath = join(opts.adaptorDir, "manifest.json");
   if (existsSync(manifestPath)) {
     const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as Record<string, unknown>;
-    manifest.self_improve_rounds = results.filter((r) => r.committed).length;
+    if (roundsCommitted > 0 && typeof manifest.version === "string") {
+      const parts = manifest.version.split(".");
+      const patch = parseInt(parts[2] ?? "0", 10) + roundsCommitted;
+      manifest.version = `${parts[0]}.${parts[1]}.${String(patch)}`;
+    }
+    manifest.self_improve_rounds = roundsCommitted;
     manifest.self_improve_score_history = [
       baselineScore,
       ...results.map((r) => r.scoreAfter),
@@ -290,8 +297,6 @@ export async function runSelfImprove(
     manifest.self_improve_last_run = new Date().toISOString();
     writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
   }
-
-  const roundsCommitted = results.filter((r) => r.committed).length;
   logger.logEvent({
     event: "self_improve_complete",
     ts: new Date().toISOString(),

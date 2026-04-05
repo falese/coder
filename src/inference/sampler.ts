@@ -34,6 +34,16 @@ export async function sampleCompletions(
 ): Promise<SampleResult[]> {
   if (prompts.length === 0) return [];
 
+  if (process.env.CODER_DRY_RUN === "1") {
+    return prompts.flatMap((prompt) =>
+      Array.from({ length: k }, () => ({
+        prompt,
+        completion: `// dry-run: ${prompt}`,
+        composite: 0.5,
+      })),
+    );
+  }
+
   const { adaptorDir } = evalOpts;
 
   // Resolve optional adaptor-supplied scoring assets (same logic as runEval)

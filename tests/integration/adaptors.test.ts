@@ -359,3 +359,34 @@ describe("coder adaptor eval", () => {
     expect(stderr).toContain("Error:");
   });
 });
+
+// ---------------------------------------------------------------------------
+// coder adaptor self-improve
+// ---------------------------------------------------------------------------
+
+describe("coder adaptor self-improve", () => {
+  test("dry-run exits 0 and prints final score", async () => {
+    const url = `file://${bareRepoPath}`;
+    await runCLI(["adaptor", "install", "react-ts", "--from-git", url], {
+      CODER_DRY_RUN: "",
+    });
+
+    const { exitCode, stdout } = await runCLI(
+      ["adaptor", "self-improve", "react-ts", "--rounds", "1", "--samples", "1"],
+      { CODER_DRY_RUN: "1" },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("Self-improvement complete.");
+  });
+
+  test("exits 1 when adaptor not installed", async () => {
+    const { exitCode, stderr } = await runCLI([
+      "adaptor",
+      "self-improve",
+      "nonexistent",
+    ]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("Error:");
+  });
+});
