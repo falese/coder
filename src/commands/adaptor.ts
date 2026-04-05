@@ -304,7 +304,10 @@ export function createAdaptorCommand(): Command {
           }
 
           const committed = results.filter((r) => r.committed).length;
-          const finalScore = results.at(-1)?.scoreAfter ?? 0;
+          const finalScore = results.reduce(
+            (score, r) => (r.committed ? r.scoreAfter : score),
+            results[0]?.scoreBefore ?? 0,
+          );
           process.stdout.write(
             `Self-improvement complete. Final score: ${finalScore.toFixed(3)} ` +
             `(rounds committed: ${String(committed)}/${String(results.length)})\n`,

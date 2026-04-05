@@ -335,6 +335,39 @@ describe("runSelfImprove", () => {
     expect(afterContent).toBe(originalContent);
   });
 
+  test("self_improve_complete final_score reflects active weights, not last rejected score", async () => {
+    const logSpy = spyOn(logger, "logEvent").mockImplementation(() => {});
+
+    // scoreBefore=0.9, scoreAfter=0.7 → rolled back → active score stays 0.9
+    let evalCallCount = 0;
+    const mockEval = mock(() => {
+      evalCallCount++;
+      return Promise.resolve(
+        makeEvalSummaryWithRecord("// write a button", evalCallCount === 1 ? 0.9 : 0.7),
+      );
+    });
+    const mockSample = mock(() => Promise.resolve([PASSING_SAMPLE]));
+    const mockTrain = mock(() => {
+      writeFileSync(join(adaptorDir, "weights", "adapters.safetensors"), "trained\n");
+      return Promise.resolve(undefined);
+    });
+
+    try {
+      await runSelfImprove(
+        { adaptorDir, modelPath: "/models/test", rounds: 1, samplesPerPrompt: 1, threshold: 0.7, temperature: 0.7, dryRun: false },
+        { evalFn: mockEval, sampleFn: mockSample, trainFn: mockTrain },
+      );
+
+      const completeCall = logSpy.mock.calls.find(([e]) => e.event === "self_improve_complete");
+      expect(completeCall).toBeDefined();
+      // Active weights are still at scoreBefore (0.9), not the rejected scoreAfter (0.7)
+      const payload = completeCall?.[0] as { final_score: number } | undefined;
+      expect(payload?.final_score).toBeCloseTo(0.9);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
   test("manifest version bumped by number of committed rounds", async () => {
     let evalCallCount = 0;
     const mockEval = mock(() => {

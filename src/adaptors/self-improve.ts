@@ -302,7 +302,7 @@ export async function runSelfImprove(
     ts: new Date().toISOString(),
     rounds_committed: roundsCommitted,
     rounds_total: opts.rounds,
-    final_score: results.at(-1)?.scoreAfter ?? 0,
+    final_score: currentScore,
   });
 
   return results;
