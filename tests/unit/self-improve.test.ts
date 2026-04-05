@@ -312,6 +312,29 @@ describe("runSelfImprove", () => {
     }
   });
 
+  test("dryRun: true skips training and never writes to weights dir", async () => {
+    const originalContent = readFileSync(
+      join(adaptorDir, "weights", "adapters.safetensors"),
+      "utf-8",
+    );
+    const mockEval = mock(() => Promise.resolve(makeEvalSummary(0.8)));
+    const mockSample = mock(() => Promise.resolve([PASSING_SAMPLE]));
+    const mockTrain = mock(() => Promise.resolve(undefined));
+
+    const results = await runSelfImprove(
+      { adaptorDir, modelPath: "/models/test", rounds: 1, samplesPerPrompt: 1, threshold: 0.7, temperature: 0.7, dryRun: true },
+      { evalFn: mockEval, sampleFn: mockSample, trainFn: mockTrain },
+    );
+
+    expect(mockTrain).not.toHaveBeenCalled();
+    expect(results[0].committed).toBe(false);
+    const afterContent = readFileSync(
+      join(adaptorDir, "weights", "adapters.safetensors"),
+      "utf-8",
+    );
+    expect(afterContent).toBe(originalContent);
+  });
+
   test("manifest version bumped by number of committed rounds", async () => {
     let evalCallCount = 0;
     const mockEval = mock(() => {

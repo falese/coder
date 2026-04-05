@@ -168,7 +168,7 @@ export async function runSelfImprove(
       top_composite: allSamples.reduce((max, s) => Math.max(max, s.composite), 0),
     });
 
-    if (filtered.length === 0) {
+    if (opts.dryRun || filtered.length === 0) {
       logger.logEvent({
         event: "self_improve_round_end",
         ts: new Date().toISOString(),
