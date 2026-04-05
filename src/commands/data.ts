@@ -137,13 +137,31 @@ export function createDataCommand(): Command {
   cmd
     .command("validate <file>")
     .description("Validate JSONL records (non-empty fields, token limits)")
-    .action((file: string) => {
+    .option("--min-tokens <n>", "Warn about records below estimated token count", parseInt)
+    .action((file: string, options: { minTokens?: number }) => {
       const summary = validateFile(file);
       process.stdout.write(`Total:   ${String(summary.total)}\n`);
       process.stdout.write(`Valid:   ${String(summary.total - summary.invalid)}\n`);
       process.stdout.write(`Invalid: ${String(summary.invalid)}\n`);
       if (summary.invalidLines.length > 0) {
         process.stdout.write(`Invalid lines: ${summary.invalidLines.join(", ")}\n`);
+      }
+      if (options.minTokens !== undefined) {
+        const minTok = options.minTokens;
+        let records: JsonlRecord[];
+        try {
+          records = readJsonl(file);
+        } catch {
+          records = [];
+        }
+        const short = records.filter(
+          (r) => (r.prompt.length + r.completion.length) / 4 < minTok,
+        );
+        if (short.length > 0) {
+          process.stderr.write(
+            `Warning: ${String(short.length)} record(s) below ${String(minTok)} token threshold\n`,
+          );
+        }
       }
       if (summary.invalid > 0) {
         process.exit(1);
@@ -156,10 +174,11 @@ export function createDataCommand(): Command {
     .option("--train-ratio <n>", "Fraction for training set (default: 0.9)", parseFloat)
     .option("--seed <n>", "Random seed (default: 42)", parseInt)
     .option("--output-dir <dir>", "Output directory (defaults to same dir as input)")
+    .option("--min-tokens <n>", "Drop records below estimated token count before splitting", parseInt)
     .action(
       (
         file: string,
-        options: { trainRatio?: number; seed?: number; outputDir?: string },
+        options: { trainRatio?: number; seed?: number; outputDir?: string; minTokens?: number },
       ) => {
         let records: JsonlRecord[];
         try {
@@ -171,6 +190,20 @@ export function createDataCommand(): Command {
           process.exit(1);
         }
 
+        if (options.minTokens !== undefined) {
+          const minTok = options.minTokens;
+          const before = records.length;
+          records = records.filter(
+            (r) => (r.prompt.length + r.completion.length) / 4 >= minTok,
+          );
+          const dropped = before - records.length;
+          if (dropped > 0) {
+            process.stderr.write(
+              `Dropped ${String(dropped)} record(s) below ${String(options.minTokens)} token threshold\n`,
+            );
+          }
+        }
+
         const { train, eval: evalSet } = splitRecords(records, {
           trainRatio: options.trainRatio,
           seed: options.seed,
@@ -180,8 +213,12 @@ export function createDataCommand(): Command {
         const outDir = options.outputDir ?? dirname(file);
         mkdirSync(outDir, { recursive: true });
 
-        const trainPath = join(outDir, `${base}.train.jsonl`);
-        const validPath = join(outDir, `${base}.valid.jsonl`);
+        const trainPath = options.outputDir
+          ? join(outDir, "train.jsonl")
+          : join(outDir, `${base}.train.jsonl`);
+        const validPath = options.outputDir
+          ? join(outDir, "valid.jsonl")
+          : join(outDir, `${base}.valid.jsonl`);
 
         writeJsonl(train, trainPath);
         writeJsonl(evalSet, validPath);

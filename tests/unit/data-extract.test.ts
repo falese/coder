@@ -210,4 +210,84 @@ const x = 42;
     ]);
     expect(records).toHaveLength(0);
   });
+
+  // ---------------------------------------------------------------------------
+  // react_component → next_block
+  // ---------------------------------------------------------------------------
+
+  const reactComponentRule: ExtractRule = { prompt: "react_component", completion: "next_block" };
+
+  test("react_component: extracts export function component body", () => {
+    const src = `
+export function Button({ label }: ButtonProps): JSX.Element {
+  return <button>{label}</button>;
+}
+`;
+    const records = extractFromSource(src, [reactComponentRule]);
+    expect(records).toHaveLength(1);
+    expect(records[0].prompt).toContain("export function Button");
+    expect(records[0].completion).toContain("return <button>");
+  });
+
+  test("react_component: extracts export default function component", () => {
+    const src = `
+export default function Modal({ open }: ModalProps) {
+  return open ? <div className="modal" /> : null;
+}
+`;
+    const records = extractFromSource(src, [reactComponentRule]);
+    expect(records).toHaveLength(1);
+    expect(records[0].prompt).toContain("export default function Modal");
+    expect(records[0].completion).toContain("modal");
+  });
+
+  test("react_component: extracts export const React.FC component", () => {
+    const src = `
+export const Card: React.FC<CardProps> = ({ title, children }) => {
+  return <div className="card"><h2>{title}</h2>{children}</div>;
+};
+`;
+    const records = extractFromSource(src, [reactComponentRule]);
+    expect(records).toHaveLength(1);
+    expect(records[0].prompt).toContain("export const Card");
+    expect(records[0].completion).toContain("card");
+  });
+
+  test("react_component: does NOT match lowercase export (utility, not component)", () => {
+    const src = `
+export const helper = (x: number) => {
+  return x * 2;
+};
+`;
+    const records = extractFromSource(src, [reactComponentRule]);
+    expect(records).toHaveLength(0);
+  });
+
+  test("react_component: does NOT match unexported function", () => {
+    const src = `
+function InternalWidget() {
+  return <span />;
+}
+`;
+    const records = extractFromSource(src, [reactComponentRule]);
+    expect(records).toHaveLength(0);
+  });
+
+  test("react_component: completion is body block, not the next function declaration", () => {
+    const src = `
+export function Alert({ message }: AlertProps) {
+  return <div role="alert">{message}</div>;
+}
+
+export function Badge({ count }: BadgeProps) {
+  return <span>{count}</span>;
+}
+`;
+    const records = extractFromSource(src, [reactComponentRule]);
+    expect(records).toHaveLength(2);
+    // First record's completion should contain Alert's body, not Badge's
+    expect(records[0].completion).toContain("role=\"alert\"");
+    expect(records[0].completion).not.toContain("Badge");
+    expect(records[1].completion).toContain("count");
+  });
 });

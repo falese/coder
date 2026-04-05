@@ -158,56 +158,113 @@ describe("coder data validate", () => {
 });
 
 describe("coder data split", () => {
-  test("creates .train.jsonl and .valid.jsonl files", async () => {
+  test("with --output-dir writes train.jsonl and valid.jsonl (no basename prefix)", async () => {
     const inputFile = join(tempDir, "data.jsonl");
+    const outDir = join(tempDir, "out");
+    mkdirSync(outDir);
     const records = Array.from({ length: 10 }, (_, i) =>
       JSON.stringify({ prompt: `p${String(i)}`, completion: `c${String(i)}` }),
     );
     writeFileSync(inputFile, records.join("\n") + "\n");
 
     const { exitCode, stderr } = await runCLI([
-      "data",
-      "split",
-      inputFile,
-      "--output-dir",
-      tempDir,
+      "data", "split", inputFile, "--output-dir", outDir,
     ]);
 
     expect(exitCode).toBe(0);
-    expect(existsSync(join(tempDir, "data.train.jsonl"))).toBe(true);
-    expect(existsSync(join(tempDir, "data.valid.jsonl"))).toBe(true);
+    expect(existsSync(join(outDir, "train.jsonl"))).toBe(true);
+    expect(existsSync(join(outDir, "valid.jsonl"))).toBe(true);
+    expect(existsSync(join(outDir, "data.train.jsonl"))).toBe(false);
     expect(stderr).toContain("Train:");
     expect(stderr).toContain("Eval:");
   });
 
+  test("without --output-dir preserves basename prefix alongside input file", async () => {
+    const inputFile = join(tempDir, "mydata.jsonl");
+    const records = Array.from({ length: 10 }, (_, i) =>
+      JSON.stringify({ prompt: `p${String(i)}`, completion: `c${String(i)}` }),
+    );
+    writeFileSync(inputFile, records.join("\n") + "\n");
+
+    const { exitCode } = await runCLI(["data", "split", inputFile]);
+
+    expect(exitCode).toBe(0);
+    expect(existsSync(join(tempDir, "mydata.train.jsonl"))).toBe(true);
+    expect(existsSync(join(tempDir, "mydata.valid.jsonl"))).toBe(true);
+  });
+
   test("respects --train-ratio flag", async () => {
     const inputFile = join(tempDir, "data.jsonl");
+    const outDir = join(tempDir, "out2");
+    mkdirSync(outDir);
     const records = Array.from({ length: 10 }, (_, i) =>
       JSON.stringify({ prompt: `p${String(i)}`, completion: `c${String(i)}` }),
     );
     writeFileSync(inputFile, records.join("\n") + "\n");
 
     await runCLI([
-      "data",
-      "split",
-      inputFile,
-      "--train-ratio",
-      "0.8",
-      "--output-dir",
-      tempDir,
+      "data", "split", inputFile, "--train-ratio", "0.8", "--output-dir", outDir,
     ]);
 
-    const trainRecords = readFileSync(join(tempDir, "data.train.jsonl"), "utf-8")
-      .trim()
-      .split("\n")
-      .filter(Boolean);
-    const evalRecords = readFileSync(join(tempDir, "data.valid.jsonl"), "utf-8")
-      .trim()
-      .split("\n")
-      .filter(Boolean);
+    const trainRecords = readFileSync(join(outDir, "train.jsonl"), "utf-8")
+      .trim().split("\n").filter(Boolean);
+    const evalRecords = readFileSync(join(outDir, "valid.jsonl"), "utf-8")
+      .trim().split("\n").filter(Boolean);
 
     expect(trainRecords).toHaveLength(8);
     expect(evalRecords).toHaveLength(2);
+  });
+});
+
+describe("coder data split --min-tokens", () => {
+  test("drops records below threshold and reports count", async () => {
+    const inputFile = join(tempDir, "mixed.jsonl");
+    // short record: ~5 tokens; long record: well above 128 tokens
+    const short = JSON.stringify({ prompt: "hi", completion: "x" });
+    const long = JSON.stringify({ prompt: "p".repeat(300), completion: "c".repeat(300) });
+    writeFileSync(inputFile, short + "\n" + long + "\n");
+    const outDir = join(tempDir, "split-min");
+    mkdirSync(outDir);
+
+    const { exitCode, stderr } = await runCLI([
+      "data", "split", inputFile, "--output-dir", outDir, "--min-tokens", "128",
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toContain("Dropped 1");
+    const train = readFileSync(join(outDir, "train.jsonl"), "utf-8").trim().split("\n").filter(Boolean);
+    const valid = readFileSync(join(outDir, "valid.jsonl"), "utf-8").trim().split("\n").filter(Boolean);
+    expect(train.length + valid.length).toBe(1);
+  });
+
+  test("drops nothing when all records are above threshold", async () => {
+    const inputFile = join(tempDir, "all-long.jsonl");
+    const long = JSON.stringify({ prompt: "p".repeat(300), completion: "c".repeat(300) });
+    writeFileSync(inputFile, long + "\n" + long + "\n");
+    const outDir = join(tempDir, "split-min2");
+    mkdirSync(outDir);
+
+    const { exitCode, stderr } = await runCLI([
+      "data", "split", inputFile, "--output-dir", outDir, "--min-tokens", "128",
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stderr).not.toContain("Dropped");
+  });
+});
+
+describe("coder data validate --min-tokens", () => {
+  test("warns about short records but exits 0", async () => {
+    const inputFile = join(tempDir, "short.jsonl");
+    writeFileSync(inputFile, JSON.stringify({ prompt: "hi", completion: "x" }) + "\n");
+
+    const { exitCode, stderr } = await runCLI([
+      "data", "validate", inputFile, "--min-tokens", "128",
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toContain("Warning:");
+    expect(stderr).toContain("1 record");
   });
 });
 

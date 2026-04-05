@@ -1,7 +1,7 @@
 import type { ExtractRule, JsonlRecord } from "./types.js";
 
 interface AnchorMatch {
-  type: "jsdoc" | "line_comment" | "ts_declare";
+  type: "jsdoc" | "line_comment" | "ts_declare" | "react_component";
   text: string;
   start: number;
   end: number;
@@ -46,6 +46,33 @@ function findAllAnchors(src: string): AnchorMatch[] {
       text: m[0].trim(),
       start: m.index,
       end: m.index + m[0].length,
+    });
+  }
+
+  // react_component: exported React component declarations (capital-name convention)
+  // Matches: export function Foo, export default function Foo,
+  //          export const Foo: React.FC/ComponentType = (, export const Foo = (
+  const reactComponentRe =
+    /^[ \t]*export\s+(?:default\s+)?(?:function\s+[A-Z]\w*|const\s+[A-Z]\w+\s*(?::\s*React\.(?:FC|ComponentType)[^=]*)?\s*=\s*\()/gm;
+  while ((m = reactComponentRe.exec(src)) !== null) {
+    // Walk past the parameter list (tracking paren depth) to find the body `{`.
+    // If the regex match already consumed a `(`, start at depth 1.
+    let pos = m.index + m[0].length;
+    let parenDepth = m[0].trimEnd().endsWith("(") ? 1 : 0;
+    let bodyBrace = -1;
+    while (pos < src.length) {
+      const ch = src[pos];
+      if (ch === "(") parenDepth++;
+      else if (ch === ")") { parenDepth--; }
+      else if (ch === "{" && parenDepth === 0) { bodyBrace = pos; break; }
+      pos++;
+    }
+    if (bodyBrace === -1) continue; // no body found (e.g. declaration only)
+    anchors.push({
+      type: "react_component",
+      text: m[0].trim(),
+      start: m.index,
+      end: bodyBrace, // point at body { so findNextBlock captures it immediately
     });
   }
 

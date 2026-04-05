@@ -20,7 +20,7 @@ import { tmpdir } from "node:os";
 import { runSelfImprove } from "../../src/adaptors/self-improve.js";
 import type { EvalSummary } from "../../src/eval/runner.js";
 import type { SampleResult } from "../../src/inference/sampler.js";
-import { logger } from "../../src/observability/logger.js";
+import { logger, resetLoggerForTest } from "../../src/observability/logger.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -96,13 +96,23 @@ const FAILING_SAMPLE: SampleResult = {
 
 describe("runSelfImprove", () => {
   let adaptorDir: string;
+  let tempLogDir: string;
 
   beforeEach(() => {
     adaptorDir = makeAdaptorDir();
+    // Isolate logger from real ~/.coder/logs — redirect to a temp dir
+    tempLogDir = mkdtempSync(join(tmpdir(), "coder-test-logs-"));
+    const configPath = join(tempLogDir, "config.toml");
+    writeFileSync(configPath, `logs_dir = "${tempLogDir}"\nlog_level = "info"\n`);
+    process.env.CODER_CONFIG_PATH = configPath;
+    resetLoggerForTest();
   });
 
   afterEach(() => {
+    delete process.env.CODER_CONFIG_PATH;
+    resetLoggerForTest();
     rmSync(adaptorDir, { recursive: true, force: true });
+    rmSync(tempLogDir, { recursive: true, force: true });
   });
 
   test("commit path: scoreAfter > scoreBefore → committed: true, .bak deleted", async () => {
