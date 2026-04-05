@@ -63,4 +63,40 @@ describe("coder logs", () => {
     expect(exitCode).toBe(0);
     expect(stdout).toContain("log");
   });
+
+  test("--follow streams existing log content and runs until killed", async () => {
+    const logLine = JSON.stringify({ ts: "2026-03-21T00:00:00Z", level: "info", msg: "follow event" });
+    writeFileSync(join(logsDir, "coder.log"), logLine + "\n");
+
+    const proc = Bun.spawn([BUN, CLI, "logs", "--follow"], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, CODER_CONFIG_PATH: configPath },
+    });
+
+    // Read from stdout until we see the expected content or hit a timeout.
+    // tail -f outputs existing file content immediately before blocking.
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    let output = "";
+    const deadline = Date.now() + 3000;
+
+    while (Date.now() < deadline) {
+      const race = await Promise.race([
+        reader.read(),
+        new Promise<{ done: true; value: undefined }>((resolve) =>
+          setTimeout(() => resolve({ done: true, value: undefined }), 200),
+        ),
+      ]);
+      if (race.done) break;
+      output += decoder.decode(race.value);
+      if (output.includes("follow event")) break;
+    }
+
+    void reader.cancel();
+    proc.kill();
+    await proc.exited;
+
+    expect(output).toContain("follow event");
+  });
 });
