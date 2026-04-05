@@ -17,83 +17,188 @@
 
 ## Session: 2026-04-04
 
-### Active issues
+### Active issues (landing together)
 
-**[#29](https://github.com/falese/coder/issues/29) — feat: temperature/top-p passthrough in GenerateOptions**
-**[#30](https://github.com/falese/coder/issues/30) — feat: sampleCompletions — scored multi-sample generator**
+**[#32](https://github.com/falese/coder/issues/32) — feat: adaptive per-prompt temperature schedule**
+**[#33](https://github.com/falese/coder/issues/33) — feat: self_improve_* log events + manifest history fields**
 
-These two P0 issues land together in a single PR. They are the foundation for the SSD self-improvement loop — see `@docs/recursive-self-improvement-proposal.md` for full context.
+These two P2 enhancements to the existing SSD orchestrator land in a single PR. The orchestrator
+(`src/adaptors/self-improve.ts`) and CLI wiring (`src/commands/adaptor.ts`) already exist from #31.
+No new files needed — this session only extends existing code.
+
+Full context: `@docs/recursive-self-improvement-proposal.md`
 
 Deliverables:
-1. `temperature?: number` and `topP?: number` added to `GenerateOptions` in `src/inference/types.ts`
-2. `--temp` / `--top-p` forwarded to `mlx_lm.generate` args in `src/inference/mlx-runner.ts` when set
-3. New file `src/inference/sampler.ts` exporting `sampleCompletions` (see interface below)
-4. Tests for all three above; no changes to existing callers
+1. **#32** — Replace the stub `temp = 0.7` in `runSelfImprove` with a per-prompt temperature map derived from `EvalRecord[]` composites
+2. **#33** — Emit the 4 `self_improve_*` log events; write `self_improve_rounds`, `self_improve_score_history`, `self_improve_last_run` to `manifest.json` after the run; update `coder adaptor info` to display new fields when present
+3. Tests covering both enhancements (new cases in `tests/unit/self-improve.test.ts`)
+4. Zod schema update in `src/adaptors/types.ts` for the 3 new manifest fields
 
-### Context: what exists technically today
+---
 
-- `GenerateOptions` in `src/inference/types.ts` — current interface has `model`, `adaptor`, `stream`, `systemPrompt`, `contextFiles`, `outputFile`; no temperature field yet
-- `runMlxBuffered` / `runMlxStream` in `src/inference/mlx-runner.ts` — build a string args array and spawn `mlx_lm.generate`; arg-construction is already tested
-- `runEval`, `computeComposite` in `src/eval/runner.ts` — scores a completion against TSC + ESLint + test suite; returns per-dimension scores and a 0–1 composite
-- **react-ts adaptor** — 144 training records, eval composite 0.920; this is the first beneficiary once self-improve lands
+### Context: what already exists
+
+- `src/adaptors/self-improve.ts` — `runSelfImprove(opts, deps)` — fully implemented with dep injection
+  - Line 117: `const temp = opts.temperature === "adaptive" ? 0.7 : opts.temperature;` ← **replace for #32**
+  - Already imports `runEval`, `EvalSummary`, `SampleResult`
+  - Already has `logger` import? **No** — need to add: `import { logger } from "../observability/logger.js";`
+- `src/adaptors/types.ts` — `ManifestSchema` (Zod) + `AdaptorManifest` type — 3 new optional fields needed for #33
+- `src/commands/adaptor.ts` — `info` subcommand at line 81 — needs to display new fields when present
+- `src/eval/runner.ts` — `EvalRecord { prompt, scores, composite, generatedCode, diagnostics }` — `composite` is the per-prompt score needed for the temp schedule
+- `src/observability/logger.ts` — `logger.logEvent({ event, ts, ...fields })` — existing structured logger
+
+---
 
 ### Open questions for this session
 
-- Verify the exact `mlx_lm.generate` flag name for temperature before wiring: expected `--temp` (not `--temperature`) and `--top-p`. Confirm against `mlx_lm.generate --help` or existing subprocess tests before committing arg names.
+- Does `sampleCompletions` accept per-prompt temperatures or a single scalar? **Current signature:** `sampleCompletions(prompts, k, temperature: number, ...)` — single scalar. For #32 the approach is to **group prompts by resolved temperature** and call `sampleFn` once per group (or just call it per-prompt if k is the binding variable). Simplest: build a `Map<number, string[]>` (temp → prompts), call `sampleFn` once per group, concat results.
+- Where to write manifest history after run? After the round loop, read `manifest.json`, update the three fields, write back. Use the existing manifest path: `join(opts.adaptorDir, "manifest.json")`.
+- Does `logger.logEvent` accept any shape? Yes — it takes a record of unknown fields; the structured logger just serialises whatever it receives. Use `ts: new Date().toISOString()` for all events.
 
 ---
 
 ## Spec context
 
-### `GenerateOptions` — current shape (`src/inference/types.ts`)
+### #32 — Adaptive per-prompt temperature schedule
+
+Per-prompt schedule (from proposal):
+
+| Current composite | Temperature |
+|---|---|
+| ≥ 0.9 (mastered) | 0.3 |
+| 0.5 – 0.9 (partial) | 0.7 |
+| < 0.5 (failing) | 1.0 |
+
+**Round 1 fallback**: no per-prompt scores yet. Use the value of `opts.temperature`:
+- If `opts.temperature === "adaptive"` → fall back to `0.7` for all prompts in round 1
+- If `opts.temperature` is a number → use that number for all prompts (disables adaptive for all rounds)
+
+**Algorithm change in `runSelfImprove`**:
+
+1. After the initial `evalFn` call that establishes `currentScore`, store the per-prompt composites:
+   ```typescript
+   let perPromptComposites: Map<string, number> | null = null;
+   // After baseline eval:
+   const baselineSummary = await evalFn(...);
+   perPromptComposites = new Map(baselineSummary.records.map(r => [r.prompt, r.composite]));
+   ```
+
+2. Inside the round loop, replace `const temp = opts.temperature === "adaptive" ? 0.7 : opts.temperature;` with:
+   ```typescript
+   function resolveTemp(promptStr: string): number {
+     if (opts.temperature !== "adaptive") return opts.temperature;
+     const c = perPromptComposites?.get(promptStr) ?? 0.7; // round-1 fallback
+     if (c >= 0.9) return 0.3;
+     if (c >= 0.5) return 0.7;
+     return 1.0;
+   }
+   ```
+
+3. Group prompts by resolved temperature, call `sampleFn` once per group:
+   ```typescript
+   // Build temp → prompts groups
+   const groups = new Map<number, string[]>();
+   for (const p of prompts) {
+     const t = resolveTemp(p);
+     const g = groups.get(t) ?? [];
+     g.push(p);
+     groups.set(t, g);
+   }
+   // Sample each group and concat
+   const allSamples: SampleResult[] = [];
+   for (const [groupTemp, groupPrompts] of groups) {
+     const s = await sampleFn(groupPrompts, opts.samplesPerPrompt, groupTemp, ...);
+     allSamples.push(...s);
+   }
+   ```
+
+4. After the post-training `evalFn` call (scoreAfter), update per-prompt composites for next round:
+   ```typescript
+   if (committed) {
+     perPromptComposites = new Map(postSummary.records.map(r => [r.prompt, r.composite]));
+   }
+   // (on rollback, keep the previous perPromptComposites)
+   ```
+
+**Note**: the `evalFn` return needs to be captured as `EvalSummary` (not just `.meanComposite`) in both baseline and post-training calls to get `records[]`.
+
+### #33 — Log events + manifest history
+
+**4 log events** to emit via `logger.logEvent(...)`:
 
 ```typescript
-export interface GenerateOptions {
-  model: string;
-  prompt: string;
-  maxTokens?: number;      // default 512
-  dryRun?: boolean;
-  adaptor?: string;
-  stream?: boolean;
-  outputFile?: string;
-  contextFiles?: string[];
-  systemFile?: string;     // path to system prompt file (not systemPrompt)
-  rawPrompt?: boolean;     // pass --ignore-chat-template
-  temperature?: number;    // forwarded as --temp; undefined → mlx_lm default (greedy / 0.0)
-  topP?: number;           // forwarded as --top-p; undefined → mlx_lm default
+// At top of each round:
+logger.logEvent({ event: "self_improve_round_start", ts: new Date().toISOString(),
+  round, total_rounds: opts.rounds, adaptor: opts.adaptorDir });
+
+// After sampleFn (once per temp group or once total — once total is fine):
+logger.logEvent({ event: "self_improve_sample", ts: new Date().toISOString(),
+  round, generated: allSamples.length, passed: filtered.length,
+  top_composite: Math.max(...allSamples.map(s => s.composite), 0) });
+
+// After gate decision:
+logger.logEvent({ event: "self_improve_round_end", ts: new Date().toISOString(),
+  round, score_before: scoreBefore, score_after: scoreAfter,
+  delta: scoreAfter - scoreBefore, committed });
+
+// After round loop ends:
+logger.logEvent({ event: "self_improve_complete", ts: new Date().toISOString(),
+  rounds_committed: results.filter(r => r.committed).length,
+  rounds_total: opts.rounds, final_score: results.at(-1)?.scoreAfter ?? 0 });
+```
+
+**3 new manifest fields** — write after the round loop:
+```typescript
+// Read, update, write manifest
+const manifestPath = join(opts.adaptorDir, "manifest.json");
+if (existsSync(manifestPath)) {
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as Record<string, unknown>;
+  const scoreHistory = [
+    currentScoreBeforeRound1,   // baseline
+    ...results.map(r => r.scoreAfter),
+  ];
+  manifest.self_improve_rounds = results.filter(r => r.committed).length;
+  manifest.self_improve_score_history = scoreHistory;
+  manifest.self_improve_last_run = new Date().toISOString();
+  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
 }
 ```
 
-### mlx-runner arg-construction pattern (`src/inference/mlx-runner.ts`)
-
-New lines to add alongside existing optional-flag handling:
+**Zod schema update** (`src/adaptors/types.ts`):
 ```typescript
-if (opts.temperature !== undefined) args.push("--temp", String(opts.temperature));
-if (opts.topP !== undefined)        args.push("--top-p", String(opts.topP));
+export const ManifestSchema = z.object({
+  // ... existing fields ...
+  self_improve_rounds: z.number().int().nonnegative().optional(),
+  self_improve_score_history: z.array(z.number()).optional(),
+  self_improve_last_run: z.string().optional(),
+});
 ```
 
-### `sampleCompletions` — interface to implement (`src/inference/sampler.ts`)
-
+**`coder adaptor info` update** (`src/commands/adaptor.ts`, `info` subcommand):
 ```typescript
-export interface SampleResult {
-  prompt: string;
-  completion: string;
-  composite: number;
+// After existing fields, display if present:
+if (manifest.self_improve_rounds !== undefined) {
+  process.stdout.write(`SSD rounds:  ${String(manifest.self_improve_rounds)}\n`);
 }
-
-export async function sampleCompletions(
-  prompts: string[],
-  k: number,
-  temperature: number,
-  opts: Pick<GenerateOptions, "model" | "adaptor">,
-  evalOpts: { adaptorDir: string },
-): Promise<SampleResult[]>
+if (manifest.self_improve_last_run !== undefined) {
+  process.stdout.write(`SSD last run: ${manifest.self_improve_last_run}\n`);
+}
+if (manifest.self_improve_score_history !== undefined) {
+  process.stdout.write(`SSD history: ${manifest.self_improve_score_history.map(s => s.toFixed(3)).join(" → ")}\n`);
+}
 ```
 
-- Generates exactly `prompts.length × k` completions (sequentially — no concurrency increase)
-- Scores each via `runTscCheck` / `runEslintCheck` / `runTestsCheck` → `computeComposite`
-- Returns all results (caller filters by threshold)
-- Empty `prompts` array must return `[]` without error
+### New tests to write
+
+Add to `tests/unit/self-improve.test.ts`:
+
+1. **Adaptive temp — mastered prompt (composite ≥ 0.9) → 0.3**: mock `evalFn` to return a summary with a prompt at composite=0.95 in baseline; assert `sampleFn` is called with temperature 0.3 for that prompt's group in round 1.
+2. **Adaptive temp — failing prompt (composite < 0.5) → 1.0**: similar setup with composite=0.3; assert sampleFn called with 1.0.
+3. **Fixed temperature disables adaptive**: pass `temperature: 0.5` (number); assert all `sampleFn` calls use 0.5 regardless of per-prompt composites.
+4. **Manifest history written after run**: verify `manifest.json` in the temp adaptor dir contains `self_improve_rounds`, `self_improve_score_history`, `self_improve_last_run` after a successful run.
+5. **Log event emitted**: assert `logger.logEvent` was called with `event: "self_improve_complete"` after the loop.
+
+**Note on mocking logger**: spy on `logger.logEvent` via `spyOn(logger, "logEvent")` — same pattern as other tests that verify log output.
 
 ---
 
@@ -101,71 +206,23 @@ export async function sampleCompletions(
 
 ```
 ./src/adaptors/manager.ts
-./src/adaptors/types.ts
-./src/chat/history.ts
-./src/cli/index.ts
-./src/commands/adaptor.ts
-./src/commands/chat.ts
-./src/commands/config.ts
-./src/commands/data.ts
-./src/commands/generate.ts
-./src/commands/logs.ts
-./src/commands/models.ts
-./src/config/loader.ts
-./src/config/types.ts
-./src/data/deduplicate.ts
-./src/data/extract.ts
-./src/data/ingest.ts
-./src/data/split.ts
-./src/data/stats.ts
-./src/data/types.ts
-./src/data/validate.ts
-./src/eval/runner.ts
-./src/inference/memory-gate.ts
-./src/inference/mlx-runner.ts
-./src/inference/sampler.ts          ← NEW (create this file)
-./src/inference/types.ts
-./src/models/inspector.ts
-./src/models/pull.ts
-./src/models/types.ts
-./src/observability/logger.ts
-./src/observability/types.ts
-./src/training/config.ts
-./src/training/runner.ts
-./adaptors/react-ts/data/eval.jsonl
-./adaptors/react-ts/data/train.jsonl
-./adaptors/react-ts/data/valid.jsonl
-./adaptors/react-ts/evals/declarations.d.ts
-./adaptors/react-ts/evals/eslint.config.mjs
-./adaptors/react-ts/evals/eval_suite.ts
-./adaptors/react-ts/train-config.toml
-./docs/eval-scoring.md
-./docs/recursive-self-improvement-proposal.md
-./docs/spec.md
-./docs/session-prompt.md
+./src/adaptors/self-improve.ts      ← MODIFY (adaptive temp + log events + manifest write)
+./src/adaptors/types.ts             ← MODIFY (3 new optional Zod fields)
+./src/commands/adaptor.ts           ← MODIFY (info subcommand: display new fields)
+./src/eval/runner.ts                (read-only — EvalRecord shape needed)
+./src/observability/logger.ts       (read-only — logEvent signature needed)
+./tests/unit/self-improve.test.ts   ← MODIFY (5 new test cases)
 ```
 
 ---
 
 ## Existing tests (summary)
 
-301 tests passing across 26 files. Do not duplicate:
+313 tests passing across 28 files. Do not duplicate existing coverage.
 
-- `runMlxBuffered`, `runMlxStream`, `checkPreflight` — mlx subprocess layer; **arg-construction is already tested** — add new tests for `--temp` / `--top-p` paths alongside existing ones
-- `loadConfig` / `setConfigValue` / `getConfigValue` — config reads/writes
-- `Logger` — structured JSON log lines, log levels
-- `checkMemory` — memory gate refuse/warn logic
-- `AdaptorManager` — manifest validation (Zod), install, list, info, update, remove
-- `ChatHistory` — conversation history, ChatML formatting, sliding window
-- `data ingest/extract/deduplicate/validate/split/stats` — full data pipeline
-- `runEval`, `computeComposite`, `formatEvalTable`, `formatEvalReport`, scorers — eval harness; **`sampleCompletions` will call these — do not re-test them, just wire through**
-- `loadTrainConfig`, `runMlxTrain` — training config + runner
-- `coder generate`, `coder chat`, `coder config`, `coder models`, `coder adaptor`, `coder data` integration
-- Extract anchors: `jsdoc`/`line_comment`/`ts_declare`/`constructor_call`
-
-New tests to write this session:
-- `GenerateOptions` with `temperature` / `topP` set → correct args appended to subprocess call
-- `GenerateOptions` with neither set → no `--temp` / `--top-p` in args (no regression)
-- `sampleCompletions` — correct total result count (`prompts.length × k`)
-- `sampleCompletions` — composite score present on every result
-- `sampleCompletions` — empty prompts array returns `[]`
+New tests to write this session (additions to `tests/unit/self-improve.test.ts`):
+- Adaptive temp: mastered prompt → 0.3
+- Adaptive temp: failing prompt → 1.0
+- Fixed temperature → disables adaptive
+- Manifest fields written after run
+- `self_improve_complete` log event emitted

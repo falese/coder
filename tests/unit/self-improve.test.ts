@@ -3,6 +3,7 @@ import {
   test,
   expect,
   mock,
+  spyOn,
   beforeEach,
   afterEach,
 } from "bun:test";
@@ -19,6 +20,7 @@ import { tmpdir } from "node:os";
 import { runSelfImprove } from "../../src/adaptors/self-improve.js";
 import type { EvalSummary } from "../../src/eval/runner.js";
 import type { SampleResult } from "../../src/inference/sampler.js";
+import { logger } from "../../src/observability/logger.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -31,6 +33,24 @@ function makeEvalSummary(meanComposite: number): EvalSummary {
     meanEslint: meanComposite,
     meanTests: meanComposite,
     meanComposite,
+  };
+}
+
+function makeEvalSummaryWithRecord(prompt: string, composite: number): EvalSummary {
+  return {
+    records: [
+      {
+        prompt,
+        composite,
+        scores: { tsc: composite, eslint: composite, tests: composite },
+        generatedCode: "",
+        diagnostics: { tsc: "", eslint: "", tests: "" },
+      },
+    ],
+    meanTsc: composite,
+    meanEslint: composite,
+    meanTests: composite,
+    meanComposite: composite,
   };
 }
 
@@ -47,6 +67,14 @@ function makeAdaptorDir(): string {
     JSON.stringify({ prompt: "// existing", completion: "const y = 2;" }) + "\n",
   );
   writeFileSync(join(dir, "weights", "adapters.safetensors"), "stub\n");
+  writeFileSync(
+    join(dir, "manifest.json"),
+    JSON.stringify({
+      name: "test", version: "1.0.0", domain: "test", base_model: "test-model",
+      mlx_quant: "4bit", lora_rank: 8, min_memory_gb: 18,
+      eval_pass_rate: 0.8, author: "", description: "",
+    }) + "\n",
+  );
   return dir;
 }
 
@@ -179,5 +207,108 @@ describe("runSelfImprove", () => {
     );
 
     expect(capturedTemps[0]).toBe(0.7);
+  });
+
+  test("adaptive temp: mastered prompt (composite >= 0.9) uses temperature 0.3", async () => {
+    const PROMPT = "// write a button";
+    const capturedTemps: number[] = [];
+    const mockEval = mock(() =>
+      Promise.resolve(makeEvalSummaryWithRecord(PROMPT, 0.95)),
+    );
+    const mockSample = mock((_prompts: unknown, _k: unknown, temp: number) => {
+      capturedTemps.push(temp);
+      return Promise.resolve([FAILING_SAMPLE]);
+    });
+    const mockTrain = mock(() => Promise.resolve(undefined));
+
+    await runSelfImprove(
+      { adaptorDir, modelPath: "/models/test", rounds: 1, samplesPerPrompt: 1, threshold: 0.7, temperature: "adaptive", dryRun: false },
+      { evalFn: mockEval, sampleFn: mockSample, trainFn: mockTrain },
+    );
+
+    expect(capturedTemps[0]).toBe(0.3);
+  });
+
+  test("adaptive temp: failing prompt (composite < 0.5) uses temperature 1.0", async () => {
+    const PROMPT = "// write a button";
+    const capturedTemps: number[] = [];
+    const mockEval = mock(() =>
+      Promise.resolve(makeEvalSummaryWithRecord(PROMPT, 0.3)),
+    );
+    const mockSample = mock((_prompts: unknown, _k: unknown, temp: number) => {
+      capturedTemps.push(temp);
+      return Promise.resolve([FAILING_SAMPLE]);
+    });
+    const mockTrain = mock(() => Promise.resolve(undefined));
+
+    await runSelfImprove(
+      { adaptorDir, modelPath: "/models/test", rounds: 1, samplesPerPrompt: 1, threshold: 0.7, temperature: "adaptive", dryRun: false },
+      { evalFn: mockEval, sampleFn: mockSample, trainFn: mockTrain },
+    );
+
+    expect(capturedTemps[0]).toBe(1.0);
+  });
+
+  test("fixed temperature disables adaptive: always uses the given number", async () => {
+    const PROMPT = "// write a button";
+    const capturedTemps: number[] = [];
+    // Baseline composite is 0.95 (mastered) — adaptive would give 0.3, but fixed should override
+    const mockEval = mock(() =>
+      Promise.resolve(makeEvalSummaryWithRecord(PROMPT, 0.95)),
+    );
+    const mockSample = mock((_prompts: unknown, _k: unknown, temp: number) => {
+      capturedTemps.push(temp);
+      return Promise.resolve([FAILING_SAMPLE]);
+    });
+    const mockTrain = mock(() => Promise.resolve(undefined));
+
+    await runSelfImprove(
+      { adaptorDir, modelPath: "/models/test", rounds: 1, samplesPerPrompt: 1, threshold: 0.7, temperature: 0.5, dryRun: false },
+      { evalFn: mockEval, sampleFn: mockSample, trainFn: mockTrain },
+    );
+
+    expect(capturedTemps[0]).toBe(0.5);
+  });
+
+  test("manifest history fields written after run", async () => {
+    let evalCallCount = 0;
+    const mockEval = mock(() => {
+      evalCallCount++;
+      return Promise.resolve(
+        makeEvalSummaryWithRecord("// write a button", evalCallCount === 1 ? 0.7 : 0.9),
+      );
+    });
+    const mockSample = mock(() => Promise.resolve([PASSING_SAMPLE]));
+    const mockTrain = mock(() => Promise.resolve(undefined));
+
+    await runSelfImprove(
+      { adaptorDir, modelPath: "/models/test", rounds: 1, samplesPerPrompt: 1, threshold: 0.7, temperature: 0.7, dryRun: false },
+      { evalFn: mockEval, sampleFn: mockSample, trainFn: mockTrain },
+    );
+
+    const manifest = JSON.parse(readFileSync(join(adaptorDir, "manifest.json"), "utf-8")) as Record<string, unknown>;
+    expect(manifest.self_improve_rounds).toBe(1);
+    expect(Array.isArray(manifest.self_improve_score_history)).toBe(true);
+    expect(typeof manifest.self_improve_last_run).toBe("string");
+  });
+
+  test("self_improve_complete log event is emitted", async () => {
+    const logSpy = spyOn(logger, "logEvent").mockImplementation(() => {});
+
+    const mockEval = mock(() => Promise.resolve(makeEvalSummary(0.8)));
+    const mockSample = mock(() => Promise.resolve([FAILING_SAMPLE]));
+    const mockTrain = mock(() => Promise.resolve(undefined));
+
+    try {
+      await runSelfImprove(
+        { adaptorDir, modelPath: "/models/test", rounds: 1, samplesPerPrompt: 1, threshold: 0.7, temperature: 0.7, dryRun: false },
+        { evalFn: mockEval, sampleFn: mockSample, trainFn: mockTrain },
+      );
+
+      const emittedEvents = logSpy.mock.calls.map(([e]) => e.event);
+      expect(emittedEvents).toContain("self_improve_complete");
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 });

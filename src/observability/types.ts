@@ -52,13 +52,52 @@ export interface EvalCompleteEvent {
   record_count: number;
 }
 
+export interface SelfImproveRoundStartEvent {
+  event: "self_improve_round_start";
+  ts: string;
+  round: number;
+  total_rounds: number;
+  adaptor: string;
+}
+
+export interface SelfImproveSampleEvent {
+  event: "self_improve_sample";
+  ts: string;
+  round: number;
+  generated: number;
+  passed: number;
+  top_composite: number;
+}
+
+export interface SelfImproveRoundEndEvent {
+  event: "self_improve_round_end";
+  ts: string;
+  round: number;
+  score_before: number;
+  score_after: number;
+  delta: number;
+  committed: boolean;
+}
+
+export interface SelfImproveCompleteEvent {
+  event: "self_improve_complete";
+  ts: string;
+  rounds_committed: number;
+  rounds_total: number;
+  final_score: number;
+}
+
 export type LogEvent =
   | GenerationStartEvent
   | FirstTokenEvent
   | GenerationCompleteEvent
   | TrainingStepEvent
   | TrainingCompleteEvent
-  | EvalCompleteEvent;
+  | EvalCompleteEvent
+  | SelfImproveRoundStartEvent
+  | SelfImproveSampleEvent
+  | SelfImproveRoundEndEvent
+  | SelfImproveCompleteEvent;
 
 export interface LogLine {
   ts: string;

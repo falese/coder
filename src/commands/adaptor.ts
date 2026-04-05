@@ -99,6 +99,17 @@ export function createAdaptorCommand(): Command {
         process.stdout.write(`Eval pass:   ${String(manifest.eval_pass_rate)}\n`);
         process.stdout.write(`Author:      ${manifest.author}\n`);
         process.stdout.write(`Description: ${manifest.description}\n`);
+        if (manifest.self_improve_rounds !== undefined) {
+          process.stdout.write(`SSD rounds:  ${String(manifest.self_improve_rounds)}\n`);
+        }
+        if (manifest.self_improve_last_run !== undefined) {
+          process.stdout.write(`SSD last run: ${manifest.self_improve_last_run}\n`);
+        }
+        if (manifest.self_improve_score_history !== undefined) {
+          process.stdout.write(
+            `SSD history: ${manifest.self_improve_score_history.map((s) => s.toFixed(3)).join(" → ")}\n`,
+          );
+        }
       } catch (err) {
         process.stderr.write(
           `Error: ${err instanceof Error ? err.message : String(err)}\n`,
