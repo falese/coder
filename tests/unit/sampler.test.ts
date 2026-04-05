@@ -101,6 +101,31 @@ describe("sampleCompletions", () => {
     }
   });
 
+  test("skips completions where estimated token count exceeds 2048", async () => {
+    // Generate a completion long enough to exceed the 2048-token limit
+    // heuristic: (prompt.length + completion.length) / 4 > 2048
+    // Make completion ~8500 chars so combined with short prompt it exceeds limit
+    const longCompletion = "x".repeat(8500);
+    const longOutput =
+      `==========\n${longCompletion}\n==========\n` +
+      "Prompt: 5 tokens, Generation: 20.0 tokens/sec\n";
+    const spy = spyOn(Bun, "spawn").mockImplementation(
+      (() => makeMockProcess(longOutput, "", 0)) as unknown as typeof Bun.spawn,
+    );
+    try {
+      const results = await sampleCompletions(
+        ["short prompt"],
+        1,
+        0.7,
+        { model: "/models/test" },
+        { adaptorDir: "/tmp/adaptor-no-evals" },
+      );
+      expect(results).toHaveLength(0);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   test("forwards temperature to every mlx_lm generate call", async () => {
     const spawnArgs: string[][] = [];
     const spy = spyOn(Bun, "spawn").mockImplementation(

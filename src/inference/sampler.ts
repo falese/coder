@@ -74,6 +74,11 @@ export async function sampleCompletions(
 
       const completion = cleanGeneratedOutput(generatedText);
 
+      // Skip samples that would exceed mlx_lm's 2048-token training limit.
+      // ~4 chars per token is a conservative heuristic for code.
+      const estimatedTokens = (prompt.length + completion.length) / 4;
+      if (estimatedTokens > 2048) continue;
+
       const tempFile = join(tmpdir(), `coder-sample-${String(Date.now())}.tsx`);
       writeFileSync(tempFile, prompt + "\n" + completion);
 
