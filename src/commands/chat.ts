@@ -110,8 +110,10 @@ export function createChatCommand(): Command {
             for (;;) {
               const { done, value } = await reader.read();
               if (done) break;
-              process.stdout.write(value);
-              assistantResponse += value;
+              // Strip chat end tokens before printing
+              const chunk = value.replace(/<\|im_end\|>/g, "").replace(/!\[\]<\|im_end\|>/g, "");
+              process.stdout.write(chunk);
+              assistantResponse += chunk;
             }
             process.stdout.write("\n");
           } catch {
