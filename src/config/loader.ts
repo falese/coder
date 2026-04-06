@@ -17,6 +17,7 @@ export const DEFAULT_CONFIG: CoderConfig = {
   models_dir: "~/.coder/models",
   logs_dir: "~/.coder/logs",
   log_level: "info",
+  capture_prompts: false,
 };
 
 export function resolveConfigPath(): string {
@@ -50,7 +51,11 @@ function mergeRawIntoConfig(
   for (const key of CONFIG_KEYS) {
     const value = raw[key];
     if (value === undefined) continue;
-    if (key === "log_level") {
+    if (key === "capture_prompts") {
+      if (typeof value === "boolean") config.capture_prompts = value;
+      else if (value === "true") config.capture_prompts = true;
+      else if (value === "false") config.capture_prompts = false;
+    } else if (key === "log_level") {
       if (typeof value === "string" && (LOG_LEVELS as readonly string[]).includes(value)) {
         config.log_level = value as CoderConfig["log_level"];
       }
@@ -132,13 +137,12 @@ export function setConfigValue(key: ConfigKey, value: string): void {
 
 export function getConfigValue(key: ConfigKey): string | undefined {
   const configPath = resolveConfigPath();
-  if (!existsSync(configPath)) {
-    // return the default value
-    return DEFAULT_CONFIG[key];
-  }
+  const defaultVal = DEFAULT_CONFIG[key];
+  const defaultStr = typeof defaultVal === "boolean" ? String(defaultVal) : defaultVal;
+  if (!existsSync(configPath)) return defaultStr;
   const raw = parseRaw(configPath);
-  // If key not in file, return default
   const value = raw[key];
-  if (value === undefined) return DEFAULT_CONFIG[key];
+  if (value === undefined) return defaultStr;
+  if (typeof value === "boolean") return String(value);
   return typeof value === "string" ? value : undefined;
 }

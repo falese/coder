@@ -378,6 +378,72 @@ describe("runSelfImprove", () => {
     }
   });
 
+  test("SSD uses eval prompts when prompt-log.jsonl is absent", async () => {
+    const capturedPrompts: string[][] = [];
+    const mockEval = mock(() => Promise.resolve(makeEvalSummary(0.8)));
+    const mockSample = mock((prompts: string[]) => {
+      capturedPrompts.push([...prompts]);
+      return Promise.resolve([FAILING_SAMPLE]);
+    });
+    const mockTrain = mock(() => Promise.resolve(undefined));
+
+    await runSelfImprove(
+      { adaptorDir, modelPath: "/models/test", rounds: 1, samplesPerPrompt: 1, threshold: 0.7, temperature: 0.7, dryRun: false },
+      { evalFn: mockEval, sampleFn: mockSample, trainFn: mockTrain },
+    );
+
+    expect(capturedPrompts[0]).toContain("// write a button");
+  });
+
+  test("SSD uses prompt-log prompts when prompt-log.jsonl is present", async () => {
+    // Write a prompt-log with long-enough prompts (>80 chars / 20 tokens)
+    const logPrompt = "write a MUI Button component with onClick handler that accepts variant and color props";
+    writeFileSync(
+      join(adaptorDir, "data", "prompt-log.jsonl"),
+      JSON.stringify({ prompt: logPrompt, ts: "2026-04-05T00:00:00.000Z" }) + "\n",
+    );
+
+    const capturedPrompts: string[][] = [];
+    const mockEval = mock(() => Promise.resolve(makeEvalSummary(0.8)));
+    const mockSample = mock((prompts: string[]) => {
+      capturedPrompts.push([...prompts]);
+      return Promise.resolve([FAILING_SAMPLE]);
+    });
+    const mockTrain = mock(() => Promise.resolve(undefined));
+
+    await runSelfImprove(
+      { adaptorDir, modelPath: "/models/test", rounds: 1, samplesPerPrompt: 1, threshold: 0.7, temperature: 0.7, dryRun: false },
+      { evalFn: mockEval, sampleFn: mockSample, trainFn: mockTrain },
+    );
+
+    expect(capturedPrompts[0]).toContain(logPrompt);
+    expect(capturedPrompts[0]).not.toContain("// write a button");
+  });
+
+  test("SSD falls back to eval prompts when all prompt-log entries are filtered out", async () => {
+    // All entries too short (below 20 token min)
+    writeFileSync(
+      join(adaptorDir, "data", "prompt-log.jsonl"),
+      JSON.stringify({ prompt: "hi", ts: "2026-04-05T00:00:00.000Z" }) + "\n",
+    );
+
+    const capturedPrompts: string[][] = [];
+    const mockEval = mock(() => Promise.resolve(makeEvalSummary(0.8)));
+    const mockSample = mock((prompts: string[]) => {
+      capturedPrompts.push([...prompts]);
+      return Promise.resolve([FAILING_SAMPLE]);
+    });
+    const mockTrain = mock(() => Promise.resolve(undefined));
+
+    await runSelfImprove(
+      { adaptorDir, modelPath: "/models/test", rounds: 1, samplesPerPrompt: 1, threshold: 0.7, temperature: 0.7, dryRun: false },
+      { evalFn: mockEval, sampleFn: mockSample, trainFn: mockTrain },
+    );
+
+    // Should fall back to eval prompts
+    expect(capturedPrompts[0]).toContain("// write a button");
+  });
+
   test("manifest version bumped by number of committed rounds", async () => {
     let evalCallCount = 0;
     const mockEval = mock(() => {

@@ -15,214 +15,146 @@
 
 ---
 
-## Session: 2026-04-04
+## Session: 2026-04-05
 
-### Active issues (landing together)
+### Active issue
 
-**[#32](https://github.com/falese/coder/issues/32) — feat: adaptive per-prompt temperature schedule**
-**[#33](https://github.com/falese/coder/issues/33) — feat: self_improve_* log events + manifest history fields**
+**[#40](https://github.com/falese/coder/issues/40) — feat: prompt capture and SSD sampling pool decoupling**
 
-These two P2 enhancements to the existing SSD orchestrator land in a single PR. The orchestrator
-(`src/adaptors/self-improve.ts`) and CLI wiring (`src/commands/adaptor.ts`) already exist from #31.
-No new files needed — this session only extends existing code.
-
-Full context: `@docs/recursive-self-improvement-proposal.md`
-
-Deliverables:
-1. **#32** — Replace the stub `temp = 0.7` in `runSelfImprove` with a per-prompt temperature map derived from `EvalRecord[]` composites
-2. **#33** — Emit the 4 `self_improve_*` log events; write `self_improve_rounds`, `self_improve_score_history`, `self_improve_last_run` to `manifest.json` after the run; update `coder adaptor info` to display new fields when present
-3. Tests covering both enhancements (new cases in `tests/unit/self-improve.test.ts`)
-4. Zod schema update in `src/adaptors/types.ts` for the 3 new manifest fields
-
----
-
-### Context: what already exists
-
-- `src/adaptors/self-improve.ts` — `runSelfImprove(opts, deps)` — fully implemented with dep injection
-  - Line 117: `const temp = opts.temperature === "adaptive" ? 0.7 : opts.temperature;` ← **replace for #32**
-  - Already imports `runEval`, `EvalSummary`, `SampleResult`
-  - Already has `logger` import? **No** — need to add: `import { logger } from "../observability/logger.js";`
-- `src/adaptors/types.ts` — `ManifestSchema` (Zod) + `AdaptorManifest` type — 3 new optional fields needed for #33
-- `src/commands/adaptor.ts` — `info` subcommand at line 81 — needs to display new fields when present
-- `src/eval/runner.ts` — `EvalRecord { prompt, scores, composite, generatedCode, diagnostics }` — `composite` is the per-prompt score needed for the temp schedule
-- `src/observability/logger.ts` — `logger.logEvent({ event, ts, ...fields })` — existing structured logger
-
----
-
-### Open questions for this session
-
-- Does `sampleCompletions` accept per-prompt temperatures or a single scalar? **Current signature:** `sampleCompletions(prompts, k, temperature: number, ...)` — single scalar. For #32 the approach is to **group prompts by resolved temperature** and call `sampleFn` once per group (or just call it per-prompt if k is the binding variable). Simplest: build a `Map<number, string[]>` (temp → prompts), call `sampleFn` once per group, concat results.
-- Where to write manifest history after run? After the round loop, read `manifest.json`, update the three fields, write back. Use the existing manifest path: `join(opts.adaptorDir, "manifest.json")`.
-- Does `logger.logEvent` accept any shape? Yes — it takes a record of unknown fields; the structured logger just serialises whatever it receives. Use `ts: new Date().toISOString()` for all events.
+Decouple the SSD loop's sampling pool from `eval.jsonl`. When `capture_prompts = true` in config,
+`coder generate --adaptor <name>` appends the user's prompt to `adaptors/<name>/data/prompt-log.jsonl`.
+`runSelfImprove` uses `prompt-log.jsonl` as the SSD sampling pool when present, falling back to eval
+prompts when absent. `eval.jsonl` becomes a clean holdout that is never touched by the SSD loop.
 
 ---
 
 ## Spec context
 
-### #32 — Adaptive per-prompt temperature schedule
+### Architecture
 
-Per-prompt schedule (from proposal):
+Two independent concerns landing together:
 
-| Current composite | Temperature |
-|---|---|
-| ≥ 0.9 (mastered) | 0.3 |
-| 0.5 – 0.9 (partial) | 0.7 |
-| < 0.5 (failing) | 1.0 |
+**A. Prompt capture** — `coder generate` side
 
-**Round 1 fallback**: no per-prompt scores yet. Use the value of `opts.temperature`:
-- If `opts.temperature === "adaptive"` → fall back to `0.7` for all prompts in round 1
-- If `opts.temperature` is a number → use that number for all prompts (disables adaptive for all rounds)
+- New config key `capture_prompts = false` (boolean, opt-in)
+- When enabled and `--adaptor` is specified, append to `adaptors/<name>/data/prompt-log.jsonl` after `generation_complete`
+- Schema: `{"prompt": "...", "ts": "2026-04-05T...", "adaptor_version": "2.0.5"}`
+- `adaptor_version` read from `adaptors/<name>/manifest.json` at capture time (missing manifest → omit field, don't error)
+- Never capture when `CODER_DRY_RUN=1`
 
-**Algorithm change in `runSelfImprove`**:
+**B. SSD sampling pool** — `runSelfImprove` side
 
-1. After the initial `evalFn` call that establishes `currentScore`, store the per-prompt composites:
-   ```typescript
-   let perPromptComposites: Map<string, number> | null = null;
-   // After baseline eval:
-   const baselineSummary = await evalFn(...);
-   perPromptComposites = new Map(baselineSummary.records.map(r => [r.prompt, r.composite]));
-   ```
-
-2. Inside the round loop, replace `const temp = opts.temperature === "adaptive" ? 0.7 : opts.temperature;` with:
-   ```typescript
-   function resolveTemp(promptStr: string): number {
-     if (opts.temperature !== "adaptive") return opts.temperature;
-     const c = perPromptComposites?.get(promptStr) ?? 0.7; // round-1 fallback
-     if (c >= 0.9) return 0.3;
-     if (c >= 0.5) return 0.7;
-     return 1.0;
-   }
-   ```
-
-3. Group prompts by resolved temperature, call `sampleFn` once per group:
-   ```typescript
-   // Build temp → prompts groups
-   const groups = new Map<number, string[]>();
-   for (const p of prompts) {
-     const t = resolveTemp(p);
-     const g = groups.get(t) ?? [];
-     g.push(p);
-     groups.set(t, g);
-   }
-   // Sample each group and concat
-   const allSamples: SampleResult[] = [];
-   for (const [groupTemp, groupPrompts] of groups) {
-     const s = await sampleFn(groupPrompts, opts.samplesPerPrompt, groupTemp, ...);
-     allSamples.push(...s);
-   }
-   ```
-
-4. After the post-training `evalFn` call (scoreAfter), update per-prompt composites for next round:
-   ```typescript
-   if (committed) {
-     perPromptComposites = new Map(postSummary.records.map(r => [r.prompt, r.composite]));
-   }
-   // (on rollback, keep the previous perPromptComposites)
-   ```
-
-**Note**: the `evalFn` return needs to be captured as `EvalSummary` (not just `.meanComposite`) in both baseline and post-training calls to get `records[]`.
-
-### #33 — Log events + manifest history
-
-**4 log events** to emit via `logger.logEvent(...)`:
+- Check for `data/prompt-log.jsonl` before falling back to eval prompts:
 
 ```typescript
-// At top of each round:
-logger.logEvent({ event: "self_improve_round_start", ts: new Date().toISOString(),
-  round, total_rounds: opts.rounds, adaptor: opts.adaptorDir });
-
-// After sampleFn (once per temp group or once total — once total is fine):
-logger.logEvent({ event: "self_improve_sample", ts: new Date().toISOString(),
-  round, generated: allSamples.length, passed: filtered.length,
-  top_composite: Math.max(...allSamples.map(s => s.composite), 0) });
-
-// After gate decision:
-logger.logEvent({ event: "self_improve_round_end", ts: new Date().toISOString(),
-  round, score_before: scoreBefore, score_after: scoreAfter,
-  delta: scoreAfter - scoreBefore, committed });
-
-// After round loop ends:
-logger.logEvent({ event: "self_improve_complete", ts: new Date().toISOString(),
-  rounds_committed: results.filter(r => r.committed).length,
-  rounds_total: opts.rounds, final_score: results.at(-1)?.scoreAfter ?? 0 });
+const samplePromptFile = join(opts.adaptorDir, "data", "prompt-log.jsonl");
+const rawPrompts = existsSync(samplePromptFile)
+  ? loadJsonlPairs(samplePromptFile).map((r) => r.prompt)
+  : evalPairs.map((r) => r.prompt);
 ```
 
-**3 new manifest fields** — write after the round loop:
-```typescript
-// Read, update, write manifest
-const manifestPath = join(opts.adaptorDir, "manifest.json");
-if (existsSync(manifestPath)) {
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as Record<string, unknown>;
-  const scoreHistory = [
-    currentScoreBeforeRound1,   // baseline
-    ...results.map(r => r.scoreAfter),
-  ];
-  manifest.self_improve_rounds = results.filter(r => r.committed).length;
-  manifest.self_improve_score_history = scoreHistory;
-  manifest.self_improve_last_run = new Date().toISOString();
-  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
-}
-```
+- Apply filters before sampling (token estimate = `chars / 4`, same heuristic used elsewhere):
+  - Drop prompts below 20 tokens (too vague)
+  - Drop prompts above 1500 tokens (pasted component context)
+  - Deduplicate using existing `deduplicate()` from `src/data/deduplicate.ts`
+- If filters reduce pool to zero, fall back to eval prompts (log a WARN)
+- `eval.jsonl` is never modified anywhere in this flow
 
-**Zod schema update** (`src/adaptors/types.ts`):
+### Config system changes
+
+`CoderConfig` currently only holds string values. `capture_prompts` is boolean — needs careful handling:
+
+**`src/config/types.ts`:**
+
 ```typescript
-export const ManifestSchema = z.object({
+export interface CoderConfig {
   // ... existing fields ...
-  self_improve_rounds: z.number().int().nonnegative().optional(),
-  self_improve_score_history: z.array(z.number()).optional(),
-  self_improve_last_run: z.string().optional(),
-});
+  capture_prompts: boolean;
+}
+
+export const CONFIG_KEYS = [
+  "default_model",
+  "adaptors_dir",
+  "models_dir",
+  "logs_dir",
+  "log_level",
+  "capture_prompts",
+] as const;
 ```
 
-**`coder adaptor info` update** (`src/commands/adaptor.ts`, `info` subcommand):
+**`src/config/loader.ts`** — add boolean branch in `mergeRawIntoConfig`:
+
 ```typescript
-// After existing fields, display if present:
-if (manifest.self_improve_rounds !== undefined) {
-  process.stdout.write(`SSD rounds:  ${String(manifest.self_improve_rounds)}\n`);
-}
-if (manifest.self_improve_last_run !== undefined) {
-  process.stdout.write(`SSD last run: ${manifest.self_improve_last_run}\n`);
-}
-if (manifest.self_improve_score_history !== undefined) {
-  process.stdout.write(`SSD history: ${manifest.self_improve_score_history.map(s => s.toFixed(3)).join(" → ")}\n`);
+if (key === "capture_prompts") {
+  if (typeof value === "boolean") config.capture_prompts = value;
+} else if (key === "log_level") {
+  // ... existing handling ...
+} else if (typeof value === "string") {
+  config[key] = value;
 }
 ```
 
-### New tests to write
+Default: `capture_prompts: false` in `DEFAULT_CONFIG`.
 
-Add to `tests/unit/self-improve.test.ts`:
+**`coder config set capture_prompts true`** — `setConfigValue` writes strings, but smol-toml
+will write `"true"` as a string. On load, `mergeRawIntoConfig` must also handle the string form:
 
-1. **Adaptive temp — mastered prompt (composite ≥ 0.9) → 0.3**: mock `evalFn` to return a summary with a prompt at composite=0.95 in baseline; assert `sampleFn` is called with temperature 0.3 for that prompt's group in round 1.
-2. **Adaptive temp — failing prompt (composite < 0.5) → 1.0**: similar setup with composite=0.3; assert sampleFn called with 1.0.
-3. **Fixed temperature disables adaptive**: pass `temperature: 0.5` (number); assert all `sampleFn` calls use 0.5 regardless of per-prompt composites.
-4. **Manifest history written after run**: verify `manifest.json` in the temp adaptor dir contains `self_improve_rounds`, `self_improve_score_history`, `self_improve_last_run` after a successful run.
-5. **Log event emitted**: assert `logger.logEvent` was called with `event: "self_improve_complete"` after the loop.
+```typescript
+if (key === "capture_prompts") {
+  if (typeof value === "boolean") config.capture_prompts = value;
+  else if (value === "true") config.capture_prompts = true;
+  else if (value === "false") config.capture_prompts = false;
+}
+```
 
-**Note on mocking logger**: spy on `logger.logEvent` via `spyOn(logger, "logEvent")` — same pattern as other tests that verify log output.
+### Prompt-log.jsonl location
+
+`adaptors/<name>/data/prompt-log.jsonl` — lives in the adaptor pack alongside `train.jsonl`
+and `eval.jsonl`. The `data/` directory already exists for all adaptors.
+
+`adaptors/<name>/data/` is not committed to git (`.gitignore` in each adaptor pack root
+should already exclude `data/` or at minimum `data/prompt-log.jsonl`).
+
+Check the existing `.gitignore` in `adaptors/react-ts/` — if `data/` is not excluded,
+add `data/prompt-log.jsonl` to the adaptor `.gitignore` files as part of this PR.
 
 ---
 
-## Current file tree
+## Files to change
 
-```
-./src/adaptors/manager.ts
-./src/adaptors/self-improve.ts      ← MODIFY (adaptive temp + log events + manifest write)
-./src/adaptors/types.ts             ← MODIFY (3 new optional Zod fields)
-./src/commands/adaptor.ts           ← MODIFY (info subcommand: display new fields)
-./src/eval/runner.ts                (read-only — EvalRecord shape needed)
-./src/observability/logger.ts       (read-only — logEvent signature needed)
-./tests/unit/self-improve.test.ts   ← MODIFY (5 new test cases)
-```
+| File                              | Change                                                                                      |
+| --------------------------------- | ------------------------------------------------------------------------------------------- |
+| `src/config/types.ts`             | Add `capture_prompts: boolean` to `CoderConfig` and `CONFIG_KEYS`                           |
+| `src/config/loader.ts`            | Add `capture_prompts: false` to `DEFAULT_CONFIG`; boolean branch in `mergeRawIntoConfig`    |
+| `src/commands/generate.ts`        | Append to `prompt-log.jsonl` post-generation when capture enabled and `--adaptor` used      |
+| `src/adaptors/self-improve.ts`    | Use `prompt-log.jsonl` as sampling pool when present; apply token filters + dedup           |
+| `tests/unit/generate.test.ts`     | Capture writes when opt-in + adaptor; no write when opt-out; no write in dry-run            |
+| `tests/unit/self-improve.test.ts` | SSD uses prompt-log when present; falls back to eval prompts when absent; filter edge cases |
+| `adaptors/react-ts/.gitignore`    | Add `data/prompt-log.jsonl` if not already excluded                                         |
+| `adaptors/react-ts-v2/.gitignore` | Same                                                                                        |
+
+---
+
+## TDD order
+
+Write failing tests first, then implementation.
+
+**generate.ts capture tests:**
+
+1. `capture_prompts=true` + `--adaptor foo` → `prompt-log.jsonl` created with correct entry
+2. `capture_prompts=true` + no `--adaptor` → no write (no adaptor, no domain signal)
+3. `capture_prompts=false` + `--adaptor foo` → no write (opt-out respected)
+4. `capture_prompts=true` + `CODER_DRY_RUN=1` → no write
+
+**self-improve.ts sampling pool tests:** 5. `prompt-log.jsonl` absent → sampling uses eval prompts (current behaviour preserved) 6. `prompt-log.jsonl` present → sampling uses prompt-log prompts, not eval prompts 7. Prompts below 20 tokens filtered out 8. Prompts above 1500 tokens filtered out 9. Duplicate prompts deduplicated before sampling 10. All prompts filtered → falls back to eval prompts + WARN logged
 
 ---
 
 ## Existing tests (summary)
 
-313 tests passing across 28 files. Do not duplicate existing coverage.
+~325 tests passing. Do not duplicate existing coverage.
 
-New tests to write this session (additions to `tests/unit/self-improve.test.ts`):
-- Adaptive temp: mastered prompt → 0.3
-- Adaptive temp: failing prompt → 1.0
-- Fixed temperature → disables adaptive
-- Manifest fields written after run
-- `self_improve_complete` log event emitted
+Key existing tests to be aware of:
+
+- `tests/unit/self-improve.test.ts` — existing SSD tests use eval prompts; test 5 above must verify this still works
+- `tests/unit/config.test.ts` — existing config load/set tests; new `capture_prompts` key must not break them

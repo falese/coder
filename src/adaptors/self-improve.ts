@@ -14,6 +14,7 @@ import { sampleCompletions } from "../inference/sampler.js";
 import { runMlxTrain } from "../training/runner.js";
 import { runEval } from "../eval/runner.js";
 import { deduplicate } from "../data/deduplicate.js";
+import { loadSamplePrompts } from "./prompt-log.js";
 import { logger } from "../observability/logger.js";
 import type { TrainConfig } from "../training/config.js";
 import type { EvalSummary } from "../eval/runner.js";
@@ -98,7 +99,27 @@ export async function runSelfImprove(
 
   // Load eval prompts and original train pairs
   const evalPairs = loadJsonlPairs(join(opts.adaptorDir, "data", "eval.jsonl"));
-  const prompts = evalPairs.map((r) => r.prompt);
+  const evalPrompts = evalPairs.map((r) => r.prompt);
+
+  // Use prompt-log.jsonl as sampling pool when present; fall back to eval prompts
+  const { prompts, source: promptSource } = loadSamplePrompts(opts.adaptorDir, evalPrompts);
+  if (promptSource === "prompt-log") {
+    logger.logEvent({
+      event: "self_improve_prompt_source",
+      ts: new Date().toISOString(),
+      source: "prompt-log",
+      count: prompts.length,
+      adaptor: opts.adaptorDir,
+    });
+  } else {
+    logger.logEvent({
+      event: "self_improve_prompt_source",
+      ts: new Date().toISOString(),
+      source: "eval-fallback",
+      count: prompts.length,
+      adaptor: opts.adaptorDir,
+    });
+  }
   const originalTrainPairs = loadJsonlPairs(join(opts.adaptorDir, "data", "train.jsonl"));
 
   // Establish baseline score before round 1; capture per-prompt composites for adaptive temp

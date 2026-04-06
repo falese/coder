@@ -87,6 +87,14 @@ export interface SelfImproveCompleteEvent {
   final_score: number;
 }
 
+export interface SelfImprovePromptSourceEvent {
+  event: "self_improve_prompt_source";
+  ts: string;
+  source: "prompt-log" | "eval-fallback";
+  count: number;
+  adaptor: string;
+}
+
 export type LogEvent =
   | GenerationStartEvent
   | FirstTokenEvent
@@ -97,7 +105,8 @@ export type LogEvent =
   | SelfImproveRoundStartEvent
   | SelfImproveSampleEvent
   | SelfImproveRoundEndEvent
-  | SelfImproveCompleteEvent;
+  | SelfImproveCompleteEvent
+  | SelfImprovePromptSourceEvent;
 
 export interface LogLine {
   ts: string;

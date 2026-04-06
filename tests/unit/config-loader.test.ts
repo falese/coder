@@ -139,6 +139,51 @@ describe("setConfigValue and getConfigValue", () => {
 });
 
 // ---------------------------------------------------------------------------
+// capture_prompts config key
+// ---------------------------------------------------------------------------
+
+describe("capture_prompts config", () => {
+  test("defaults to false", () => {
+    const config = loadConfig();
+    expect(config.capture_prompts).toBe(false);
+  });
+
+  test("reads native TOML boolean true from file", () => {
+    writeFileSync(configPath, `capture_prompts = true\n`);
+    const config = loadConfig();
+    expect(config.capture_prompts).toBe(true);
+  });
+
+  test("reads native TOML boolean false from file", () => {
+    writeFileSync(configPath, `capture_prompts = false\n`);
+    const config = loadConfig();
+    expect(config.capture_prompts).toBe(false);
+  });
+
+  test("reads string 'true' written by coder config set", () => {
+    writeFileSync(configPath, `capture_prompts = "true"\n`);
+    const config = loadConfig();
+    expect(config.capture_prompts).toBe(true);
+  });
+
+  test("reads string 'false' written by coder config set", () => {
+    writeFileSync(configPath, `capture_prompts = "false"\n`);
+    const config = loadConfig();
+    expect(config.capture_prompts).toBe(false);
+  });
+
+  test("capture_prompts is in CONFIG_KEYS", () => {
+    expect((CONFIG_KEYS as readonly string[]).includes("capture_prompts")).toBe(true);
+  });
+
+  test("setConfigValue capture_prompts persists and loads back as true", () => {
+    setConfigValue("capture_prompts", "true");
+    const config = loadConfig();
+    expect(config.capture_prompts).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // logs_dir config key
 // ---------------------------------------------------------------------------
 

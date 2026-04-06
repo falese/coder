@@ -6,6 +6,7 @@ import { loadConfig } from "../config/loader.js";
 import { logger } from "../observability/logger.js";
 import { checkMemory } from "../inference/memory-gate.js";
 import { getModelEntry } from "../models/inspector.js";
+import { capturePrompt } from "../adaptors/prompt-log.js";
 
 function collectStrings(val: string, acc: string[]): string[] {
   return [...acc, val];
@@ -119,6 +120,19 @@ export function createGenerateCommand(): Command {
             ttft_ms: result.ttftMs,
             tok_s: result.tokensPerSecond,
           });
+
+          if (config.capture_prompts && options.adaptor && !dryRun) {
+            const adaptorPackDir = join(config.adaptors_dir, options.adaptor);
+            let adaptorVersion: string | undefined;
+            const manifestPath = join(adaptorPackDir, "manifest.json");
+            if (existsSync(manifestPath)) {
+              try {
+                const m = JSON.parse(readFileSync(manifestPath, "utf-8")) as Record<string, unknown>;
+                if (typeof m.version === "string") adaptorVersion = m.version;
+              } catch { /* ignore — version field is best-effort */ }
+            }
+            capturePrompt(prompt, adaptorPackDir, adaptorVersion);
+          }
 
           if (result.tokensPerSecond !== undefined) {
             process.stderr.write(

@@ -42,7 +42,7 @@ export function createConfigCommand(): Command {
     .action(() => {
       const config = loadConfig();
       for (const key of CONFIG_KEYS) {
-        process.stdout.write(`${key} = ${config[key]}\n`);
+        process.stdout.write(`${key} = ${String(config[key])}\n`);
       }
     });
 

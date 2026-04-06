@@ -6,7 +6,7 @@
   "mlx_quant": "4bit",
   "lora_rank": 8,
   "min_memory_gb": 18,
-  "eval_pass_rate": 0.9199999999999999,
+  "eval_pass_rate": 0.43333333333333346,
   "author": "",
   "description": "React TypeScript + MUI + Module Federation patterns",
   "baseline_pass_rate": 0.45999999999999996,

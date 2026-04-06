@@ -18,6 +18,7 @@ function makeConfig(overrides: Partial<CoderConfig> = {}): CoderConfig {
     models_dir: join(tempDir, "models"),
     logs_dir: join(tempDir, "logs"),
     log_level: "info",
+    capture_prompts: false,
     ...overrides,
   };
 }

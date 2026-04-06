@@ -1,13 +1,21 @@
 {
   "name": "react-ts-v2",
-  "version": "2.0.0",
+  "version": "2.0.5",
   "domain": "frontend",
   "base_model": "Qwen2.5-Coder-7B",
   "mlx_quant": "4bit",
   "lora_rank": 8,
   "min_memory_gb": 18,
-  "eval_pass_rate": 0.0,
-  "baseline_pass_rate": 0.0,
+  "eval_pass_rate": 0.7100000000000001,
+  "baseline_pass_rate": 0.4933333333333331,
   "author": "",
-  "description": "React TypeScript + MUI + Module Federation patterns — v2 dataset (toolpad, react-admin, mui/docs; react_component anchor; ~500+ training records)"
+  "description": "React TypeScript + MUI patterns — v2 dataset (toolpad, react-admin, mui/docs; react_component anchor; ~500+ training records)",
+  "self_improve_rounds": 1,
+  "self_improve_score_history": [
+    0.7100000000000001,
+    0.6966666666666668,
+    0.7566666666666667,
+    0.5700000000000001
+  ],
+  "self_improve_last_run": "2026-04-05T23:28:39.906Z"
 }
