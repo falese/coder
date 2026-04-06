@@ -1,4 +1,3 @@
-data/train.jsonl
 data/valid.jsonl
 weights/
 training.log
