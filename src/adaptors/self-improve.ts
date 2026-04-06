@@ -11,7 +11,7 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { sampleCompletions } from "../inference/sampler.js";
-import { runMlxTrain } from "../training/runner.js";
+import { runMlxTrain, TrainingDivergedError } from "../training/runner.js";
 import { runEval } from "../eval/runner.js";
 import { deduplicate } from "../data/deduplicate.js";
 import { loadSamplePrompts } from "./prompt-log.js";
@@ -80,6 +80,15 @@ function loadJsonlPairs(filePath: string): JsonlPair[] {
     .filter((l) => l.trim().length > 0)
     .map((l) => JSON.parse(l) as JsonlPair);
 }
+
+// ---------------------------------------------------------------------------
+// Training hyperparameter constants
+// ---------------------------------------------------------------------------
+
+const TARGET_EPOCHS = 3;
+const MAX_ITERS = 300;
+const MIN_ITERS = 10;
+const BATCH_SIZE = 2;
 
 // ---------------------------------------------------------------------------
 // Orchestrator
@@ -232,14 +241,22 @@ export async function runSelfImprove(
 
       // Build TrainConfig and retrain
       mkdirSync(weightsDir, { recursive: true });
+
+      // #42: adaptive iter budget — scale to ~TARGET_EPOCHS, clamped
+      const stepsPerEpoch = Math.ceil(merged.length / BATCH_SIZE);
+      const iters = Math.max(MIN_ITERS, Math.min(TARGET_EPOCHS * stepsPerEpoch, MAX_ITERS));
+
+      // #44: conservative LR when model is already strong
+      const learningRate = scoreBefore >= 0.7 ? 5e-5 : 1e-4;
+
       const config: TrainConfig = {
         model: { path: opts.modelPath },
         lora: {
           rank: 8,
           target_modules: ["q_proj", "v_proj"],
-          iters: 100,
-          batch_size: 2,
-          learning_rate: 1e-4,
+          iters,
+          batch_size: BATCH_SIZE,
+          learning_rate: learningRate,
         },
         data: { dir: tempDataDir },
         output: {
@@ -248,7 +265,38 @@ export async function runSelfImprove(
           log_file: join(opts.adaptorDir, "training.log"),
         },
       };
-      await trainFn(config, opts.dryRun);
+      // #43: catch divergence — restore backup immediately, skip post-eval
+      try {
+        await trainFn(config, opts.dryRun);
+      } catch (err) {
+        if (err instanceof TrainingDivergedError) {
+          if (existsSync(backupFile)) {
+            copyFileSync(backupFile, checkpointFile);
+            unlinkSync(backupFile);
+          }
+          logger.logEvent({
+            event: "self_improve_round_end",
+            ts: new Date().toISOString(),
+            round,
+            score_before: scoreBefore,
+            score_after: scoreBefore,
+            delta: 0,
+            committed: false,
+            abort_reason: "loss_spike",
+          });
+          results.push({
+            round,
+            generated: allSamples.length,
+            filtered: filtered.length,
+            scoreBefore,
+            scoreAfter: scoreBefore,
+            committed: false,
+          });
+          currentScore = scoreBefore;
+          continue;
+        }
+        throw err;
+      }
 
       // Gate: evaluate new weights
       const postSummary = await evalFn(opts.adaptorDir, {

@@ -77,6 +77,7 @@ export interface SelfImproveRoundEndEvent {
   score_after: number;
   delta: number;
   committed: boolean;
+  abort_reason?: string;
 }
 
 export interface SelfImproveCompleteEvent {

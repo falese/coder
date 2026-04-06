@@ -17,102 +17,177 @@
 
 ## Session: 2026-04-05
 
-### Active issue
+### Active issues (landing together)
 
-**[#41](https://github.com/falese/coder/issues/41) — feat: coder data prompts — manage the SSD prompt log**
+**[#42](https://github.com/falese/coder/issues/42) — fix: adaptive training iter budget in SSD**
+**[#43](https://github.com/falese/coder/issues/43) — fix: loss-spike early abort in SSD training**
+**[#44](https://github.com/falese/coder/issues/44) — fix: lower learning rate for high-quality checkpoints**
 
-Add a `coder data prompts` subcommand for inspecting and managing `prompt-log.jsonl`.
-Depends on #40 (already merged). The prompt-log lives at `adaptors/<name>/data/prompt-log.jsonl`.
+All three are training stability fixes in the SSD loop. No new CLI commands, no new config keys.
+Land in a single PR. Priority order: #44 first (2 lines), then #42 (formula + test), then #43 (most involved).
 
 ---
 
 ## Spec context
 
-### Prompt-log.jsonl schema (from #40)
+### #44 — Lower LR for high-quality checkpoints
 
-```jsonl
-{"prompt": "add a confirm dialog with cancel and submit", "ts": "2026-04-05T19:23:12.935Z", "adaptor_version": "2.0.5"}
-```
-
-`adaptor_version` is optional — may be absent for older entries.
-
-### Subcommand surface
-
-```
-coder data prompts list --adaptor <name>                       # print all prompts with timestamps
-coder data prompts stats --adaptor <name>                      # count + token distribution
-coder data prompts deduplicate --adaptor <name>                # deduplicate in-place, report removed count
-coder data prompts purge --adaptor <name> --before <ISO-date>  # remove entries older than date
-coder data prompts purge --adaptor <name> --below-tokens <n>   # remove entries below token threshold
-```
-
-### Implementation notes
-
-All subcommands:
-- Resolve adaptor dir: `join(config.adaptors_dir, adaptorName)`
-- Prompt-log path: `join(adaptorDir, "data", "prompt-log.jsonl")`
-- Hard error if `--adaptor` not given or adaptor dir does not exist
-- Hard error if `prompt-log.jsonl` does not exist (for all subcommands except `purge`, which is a no-op)
-
-**`list`** — print one entry per line: `[<ts>] <prompt>` (truncate prompt to 80 chars for display)
-
-**`stats`** — print:
-```
-Total prompts:   N
-Unique prompts:  N
-Token estimate:  min=X  p50=X  p95=X  max=X
-```
-Token estimate = `(prompt.length / 4)`, same heuristic used throughout.
-
-**`deduplicate`** — exact dedup only (preserve first occurrence of each prompt string).
-Write back in-place. Print: `Removed N duplicate entries. N remaining.`
-
-**`purge --before <date>`** — parse ISO date string; remove entries where `entry.ts < date`.
-Requires `--confirm` flag — without it, prints dry-run summary and exits 0 without modifying.
-Print: `Would remove N entries older than <date>. Run with --confirm to apply.` / `Removed N entries.`
-
-**`purge --below-tokens <n>`** — remove entries where `prompt.length / 4 < n`.
-Same `--confirm` requirement. Both `--before` and `--below-tokens` may be combined.
-
-### Adding to `createDataCommand`
-
-`src/commands/data.ts` already exports `createDataCommand()`. Add a `prompts` subcommand:
+In `runSelfImprove`, compute `learningRate` per-round from `currentScore` before building `TrainConfig`:
 
 ```typescript
-const promptsCmd = new Command("prompts").description("Manage the SSD prompt log");
-promptsCmd.addCommand(/* list, stats, deduplicate, purge */);
-cmd.addCommand(promptsCmd);
+const learningRate = currentScore >= 0.7 ? 5e-5 : 1e-4;
 ```
+
+Pass into `config.lora.learning_rate`. Also log it in the `self_improve_round_start` event so it's
+visible in the log.
+
+**Files:** `src/adaptors/self-improve.ts` only.
+
+**Tests:** assert `trainFn` receives `learning_rate = 5e-5` when `scoreBefore >= 0.7`, and `1e-4` when below.
 
 ---
 
-## Files to change
+### #42 — Adaptive iter budget
+
+In `runSelfImprove`, compute `iters` from target epoch count after building `merged`:
+
+```typescript
+const TARGET_EPOCHS = 3;
+const MAX_ITERS = 300;
+const MIN_ITERS = 10;
+const stepsPerEpoch = Math.ceil(merged.length / BATCH_SIZE); // BATCH_SIZE = 2
+const iters = Math.max(MIN_ITERS, Math.min(TARGET_EPOCHS * stepsPerEpoch, MAX_ITERS));
+```
+
+`TARGET_EPOCHS`, `MAX_ITERS`, `MIN_ITERS`, `BATCH_SIZE` as module-level constants — not hardcoded inline.
+
+**Files:** `src/adaptors/self-improve.ts` only.
+
+**Tests:**
+- Small merged dataset (e.g. 4 records) → iters = `max(MIN_ITERS, 3 * ceil(4/2))` = `max(10, 6)` = 10
+- Large merged dataset (e.g. 300 records) → iters capped at MAX_ITERS (300)
+- Mid-size dataset (e.g. 20 records) → iters = `3 * ceil(20/2)` = 30
+
+---
+
+### #43 — Loss-spike early abort
+
+**Goal:** detect training divergence mid-run, abort before saving bad weights, skip post-eval.
+
+**New error type** in `src/training/runner.ts`:
+
+```typescript
+export class TrainingDivergedError extends Error {
+  constructor(public readonly lossAtAbort: number, public readonly iterAtAbort: number) {
+    super(`Training diverged: loss ${String(lossAtAbort)} at iter ${String(iterAtAbort)}`);
+    this.name = "TrainingDivergedError";
+  }
+}
+```
+
+**Detection logic** in `runMlxTrain` — after logging each `training_step`, check the rolling window:
+
+```typescript
+// Track last 3 losses for rolling mean
+const recentLosses: number[] = [];
+// ...in the per-line loop, after parsing:
+recentLosses.push(parsed.loss);
+if (recentLosses.length > 3) recentLosses.shift();
+
+if (recentLosses.length === 3) {
+  const rollingMean = recentLosses.slice(0, 2).reduce((a, b) => a + b, 0) / 2;
+  const latest = recentLosses[2];
+  if (latest > 1.5 * rollingMean && latest > 0.8) {
+    proc.kill(); // terminate mlx_lm
+    throw new TrainingDivergedError(latest, parsed.iter);
+  }
+}
+```
+
+Wait for loss to stabilise: only check after iter 20 (skip early training noise).
+
+**Abort handling** in `runSelfImprove` — catch `TrainingDivergedError` after `await trainFn(...)`:
+
+```typescript
+try {
+  await trainFn(config, opts.dryRun);
+} catch (err) {
+  if (err instanceof TrainingDivergedError) {
+    // Restore backup immediately — skip post-eval
+    if (existsSync(backupFile)) {
+      copyFileSync(backupFile, checkpointFile);
+      unlinkSync(backupFile);
+    }
+    logger.logEvent({
+      event: "self_improve_round_end",
+      ts: new Date().toISOString(),
+      round,
+      score_before: scoreBefore,
+      score_after: scoreBefore, // unchanged — rolled back
+      delta: 0,
+      committed: false,
+    });
+    results.push({ round, generated: allSamples.length, filtered: filtered.length,
+      scoreBefore, scoreAfter: scoreBefore, committed: false });
+    currentScore = scoreBefore;
+    continue;
+  }
+  throw err; // re-throw non-divergence errors
+}
+```
+
+**Log event addition** — add `abort_reason` field to `self_improve_round_end` when aborting.
+The existing `SelfImproveRoundEndEvent` interface needs an optional `abort_reason?: string` field.
+
+**Files to change:**
 
 | File | Change |
 |---|---|
-| `src/commands/data.ts` | Add `prompts` subcommand with `list`, `stats`, `deduplicate`, `purge` |
-| `tests/unit/data-prompts.test.ts` | New test file — all subcommand logic |
+| `src/training/runner.ts` | Add `TrainingDivergedError`; detection logic in `runMlxTrain` |
+| `src/adaptors/self-improve.ts` | Catch `TrainingDivergedError`; restore backup; log abort; continue loop |
+| `src/observability/types.ts` | Add `abort_reason?: string` to `SelfImproveRoundEndEvent` |
+| `tests/unit/training-runner.test.ts` | Test divergence detection: spike triggers error, stable does not |
+| `tests/unit/self-improve.test.ts` | Test abort path: backup restored, loop continues, no post-eval |
 
-No changes needed to `src/adaptors/prompt-log.ts` — existing exports cover what's needed.
+---
+
+## Current file tree
+
+```
+src/adaptors/self-improve.ts        ← MODIFY (#42, #43, #44)
+src/training/runner.ts              ← MODIFY (#43 TrainingDivergedError + detection)
+src/observability/types.ts          ← MODIFY (#43 abort_reason field)
+tests/unit/self-improve.test.ts     ← MODIFY (#42, #43, #44 new tests)
+tests/unit/training-runner.test.ts  ← MODIFY (#43 divergence detection tests)
+```
 
 ---
 
 ## TDD order
 
-Write failing tests first, then implementation. All tests use a temp adaptor dir with seeded `prompt-log.jsonl`.
+Write failing tests first, then implementation.
 
-1. `list` prints entries with timestamps and truncated prompts
-2. `list` errors if prompt-log absent
-3. `stats` reports correct count, unique count, token min/p50/p95/max
-4. `deduplicate` removes exact duplicates in-place, reports removed count
-5. `deduplicate` with no duplicates reports 0 removed
-6. `purge --before <date>` without `--confirm` prints summary, does not modify file
-7. `purge --before <date> --confirm` removes correct entries
-8. `purge --below-tokens <n> --confirm` removes short entries
-9. `purge --before --below-tokens --confirm` applies both filters
+**#44 tests (self-improve.test.ts):**
+1. `scoreBefore >= 0.7` → `trainFn` called with `learning_rate = 5e-5`
+2. `scoreBefore < 0.7` → `trainFn` called with `learning_rate = 1e-4`
+
+**#42 tests (self-improve.test.ts):**
+3. Small dataset (4 records) → iter count floored at MIN_ITERS (10)
+4. Large dataset (300 records) → iter count capped at MAX_ITERS (300)
+5. Mid dataset (20 records) → iter count = 30
+
+**#43 tests:**
+6. (training-runner.test.ts) Loss stable → no error thrown
+7. (training-runner.test.ts) Loss spikes at iter 30+ → `TrainingDivergedError` thrown
+8. (training-runner.test.ts) Loss spikes before iter 20 → no error (too early)
+9. (self-improve.test.ts) `TrainingDivergedError` → backup restored, loop continues, `committed: false`
+10. (self-improve.test.ts) Non-divergence error from `trainFn` → re-thrown (not swallowed)
 
 ---
 
 ## Existing tests (summary)
 
-355 tests passing across 29 files. Do not duplicate existing coverage.
+367 tests passing across 30 files. Do not duplicate existing coverage.
+
+Key constraint: existing `training-runner.test.ts` tests mock the subprocess — the divergence
+detection tests will need to mock the loss line stream similarly.

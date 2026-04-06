@@ -13,6 +13,13 @@ import { logger } from "../observability/logger.js";
 import { generateLoraYaml } from "./config.js";
 import type { TrainConfig } from "./config.js";
 
+export class TrainingDivergedError extends Error {
+  constructor(public readonly lossAtAbort: number, public readonly iterAtAbort: number) {
+    super(`Training diverged: loss ${String(lossAtAbort)} at iter ${String(iterAtAbort)}`);
+    this.name = "TrainingDivergedError";
+  }
+}
+
 export function parseLossLine(
   line: string,
 ): { iter: number; loss: number } | null {
@@ -101,6 +108,7 @@ export async function runMlxTrain(
   let lineBuffer = "";
   let finalLoss: number | undefined;
   let stdoutOutput = "";
+  const recentLosses: number[] = []; // rolling window for divergence detection
 
   for (;;) {
     const { done, value } = await reader.read();
@@ -117,6 +125,20 @@ export async function runMlxTrain(
       const parsed = parseLossLine(line);
       if (parsed) {
         finalLoss = parsed.loss;
+
+        // #43: detect divergence — accumulate all losses, but only check after iter 20
+        recentLosses.push(parsed.loss);
+        if (recentLosses.length > 3) recentLosses.shift();
+        if (parsed.iter >= 20 && recentLosses.length >= 2) {
+          const prev = recentLosses.slice(0, recentLosses.length - 1);
+          const rollingMean = prev.reduce((a, b) => a + b, 0) / prev.length;
+          const latest = recentLosses[recentLosses.length - 1];
+          if (latest > 1.5 * rollingMean && latest > 0.8) {
+            proc.kill();
+            throw new TrainingDivergedError(latest, parsed.iter);
+          }
+        }
+
         const stepEvent = {
           ts: new Date().toISOString(),
           event: "training_step" as const,

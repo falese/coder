@@ -20,6 +20,7 @@ import { tmpdir } from "node:os";
 import { runSelfImprove } from "../../src/adaptors/self-improve.js";
 import type { EvalSummary } from "../../src/eval/runner.js";
 import type { SampleResult } from "../../src/inference/sampler.js";
+import type { TrainConfig } from "../../src/training/config.js";
 import { logger, resetLoggerForTest } from "../../src/observability/logger.js";
 
 // ---------------------------------------------------------------------------
@@ -442,6 +443,153 @@ describe("runSelfImprove", () => {
 
     // Should fall back to eval prompts
     expect(capturedPrompts[0]).toContain("// write a button");
+  });
+
+  // ---------------------------------------------------------------------------
+  // #44 — learning rate per round
+  // ---------------------------------------------------------------------------
+
+  test("#44: scoreBefore >= 0.7 → trainFn receives learning_rate = 5e-5", async () => {
+    const capturedConfigs: TrainConfig[] = [];
+    let evalCallCount = 0;
+    const mockEval = mock(() => {
+      evalCallCount++;
+      return Promise.resolve(makeEvalSummary(evalCallCount === 1 ? 0.8 : 0.9));
+    });
+    const mockSample = mock(() => Promise.resolve([PASSING_SAMPLE]));
+    const mockTrain = mock((config: TrainConfig) => {
+      capturedConfigs.push(config);
+      return Promise.resolve(undefined);
+    });
+
+    await runSelfImprove(
+      { adaptorDir, modelPath: "/models/test", rounds: 1, samplesPerPrompt: 1, threshold: 0.7, temperature: 0.7, dryRun: false },
+      { evalFn: mockEval, sampleFn: mockSample, trainFn: mockTrain },
+    );
+
+    expect(capturedConfigs[0].lora.learning_rate).toBe(5e-5);
+  });
+
+  test("#44: scoreBefore < 0.7 → trainFn receives learning_rate = 1e-4", async () => {
+    const capturedConfigs: TrainConfig[] = [];
+    let evalCallCount = 0;
+    const mockEval = mock(() => {
+      evalCallCount++;
+      return Promise.resolve(makeEvalSummary(evalCallCount === 1 ? 0.5 : 0.9));
+    });
+    const mockSample = mock(() => Promise.resolve([PASSING_SAMPLE]));
+    const mockTrain = mock((config: TrainConfig) => {
+      capturedConfigs.push(config);
+      return Promise.resolve(undefined);
+    });
+
+    await runSelfImprove(
+      { adaptorDir, modelPath: "/models/test", rounds: 1, samplesPerPrompt: 1, threshold: 0.7, temperature: 0.7, dryRun: false },
+      { evalFn: mockEval, sampleFn: mockSample, trainFn: mockTrain },
+    );
+
+    expect(capturedConfigs[0].lora.learning_rate).toBe(1e-4);
+  });
+
+  // ---------------------------------------------------------------------------
+  // #42 — adaptive iter budget
+  // ---------------------------------------------------------------------------
+
+  test("#42: small merged dataset → iter count floored at MIN_ITERS", async () => {
+    // train.jsonl has 1 record; 1 filtered sample → merged = 2 records
+    // TARGET_EPOCHS=3, BATCH=2 → steps=1 → iters=3 → floored to MIN_ITERS=10
+    const capturedConfigs: TrainConfig[] = [];
+    let evalCallCount = 0;
+    const mockEval = mock(() => {
+      evalCallCount++;
+      return Promise.resolve(makeEvalSummary(evalCallCount === 1 ? 0.5 : 0.9));
+    });
+    const mockSample = mock(() => Promise.resolve([PASSING_SAMPLE]));
+    const mockTrain = mock((config: TrainConfig) => {
+      capturedConfigs.push(config);
+      return Promise.resolve(undefined);
+    });
+
+    await runSelfImprove(
+      { adaptorDir, modelPath: "/models/test", rounds: 1, samplesPerPrompt: 1, threshold: 0.7, temperature: 0.7, dryRun: false },
+      { evalFn: mockEval, sampleFn: mockSample, trainFn: mockTrain },
+    );
+
+    expect(capturedConfigs[0].lora.iters).toBeGreaterThanOrEqual(10);
+  });
+
+  test("#42: large merged dataset → iter count capped at MAX_ITERS", async () => {
+    // Seed train.jsonl with enough records that merged > 200 records
+    const bigTrainRecords = Array.from({ length: 200 }, (_, i) =>
+      JSON.stringify({ prompt: `// prompt ${String(i)}`, completion: `const x${String(i)} = 1;` }),
+    ).join("\n") + "\n";
+    writeFileSync(join(adaptorDir, "data", "train.jsonl"), bigTrainRecords);
+
+    const capturedConfigs: TrainConfig[] = [];
+    let evalCallCount = 0;
+    const mockEval = mock(() => {
+      evalCallCount++;
+      return Promise.resolve(makeEvalSummary(evalCallCount === 1 ? 0.5 : 0.9));
+    });
+    const mockSample = mock(() => Promise.resolve([PASSING_SAMPLE]));
+    const mockTrain = mock((config: TrainConfig) => {
+      capturedConfigs.push(config);
+      return Promise.resolve(undefined);
+    });
+
+    await runSelfImprove(
+      { adaptorDir, modelPath: "/models/test", rounds: 1, samplesPerPrompt: 1, threshold: 0.7, temperature: 0.7, dryRun: false },
+      { evalFn: mockEval, sampleFn: mockSample, trainFn: mockTrain },
+    );
+
+    expect(capturedConfigs[0].lora.iters).toBeLessThanOrEqual(300);
+  });
+
+  // ---------------------------------------------------------------------------
+  // #43 — TrainingDivergedError abort path
+  // ---------------------------------------------------------------------------
+
+  test("#43: TrainingDivergedError → backup restored, loop continues, committed: false", async () => {
+    const { TrainingDivergedError } = await import("../../src/training/runner.js");
+    const originalContent = readFileSync(join(adaptorDir, "weights", "adapters.safetensors"), "utf-8");
+
+    const mockEval = mock(() => Promise.resolve(makeEvalSummary(0.8)));
+    const mockSample = mock(() => Promise.resolve([PASSING_SAMPLE]));
+    const mockTrain = mock(() => {
+      writeFileSync(join(adaptorDir, "weights", "adapters.safetensors"), "diverged\n");
+      return Promise.reject(new TrainingDivergedError(1.5, 30));
+    });
+
+    const results = await runSelfImprove(
+      { adaptorDir, modelPath: "/models/test", rounds: 1, samplesPerPrompt: 1, threshold: 0.7, temperature: 0.7, dryRun: false },
+      { evalFn: mockEval, sampleFn: mockSample, trainFn: mockTrain },
+    );
+
+    // Backup restored
+    const restored = readFileSync(join(adaptorDir, "weights", "adapters.safetensors"), "utf-8");
+    expect(restored).toBe(originalContent);
+    // .bak cleaned up
+    expect(existsSync(join(adaptorDir, "weights", "adapters.safetensors.bak"))).toBe(false);
+    // Round marked not committed
+    expect(results[0].committed).toBe(false);
+    // Loop completed (didn't throw)
+    expect(results).toHaveLength(1);
+  });
+
+  test("#43: non-divergence error from trainFn is re-thrown", async () => {
+    const mockEval = mock(() => Promise.resolve(makeEvalSummary(0.8)));
+    const mockSample = mock(() => Promise.resolve([PASSING_SAMPLE]));
+    const mockTrain = mock(() => Promise.reject(new Error("disk full")));
+
+    let threw: unknown;
+    try {
+      await runSelfImprove(
+        { adaptorDir, modelPath: "/models/test", rounds: 1, samplesPerPrompt: 1, threshold: 0.7, temperature: 0.7, dryRun: false },
+        { evalFn: mockEval, sampleFn: mockSample, trainFn: mockTrain },
+      );
+    } catch (e) { threw = e; }
+    expect(threw).toBeInstanceOf(Error);
+    expect((threw as Error).message).toBe("disk full");
   });
 
   test("manifest version bumped by number of committed rounds", async () => {
