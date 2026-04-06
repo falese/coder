@@ -10,6 +10,7 @@ import { splitRecords } from "../data/split.js";
 import { computeStats } from "../data/stats.js";
 import { ExtractConfigSchema } from "../data/types.js";
 import type { JsonlRecord } from "../data/types.js";
+import { createDataPromptsCommand } from "./data-prompts.js";
 
 function writeJsonl(records: JsonlRecord[], outPath: string): void {
   const dir = dirname(outPath);
@@ -256,6 +257,9 @@ export function createDataCommand(): Command {
         `Duplicate rate:  ${(stats.duplicateRate * 100).toFixed(1)}%\n`,
       );
     });
+
+  const config = loadConfig();
+  cmd.addCommand(createDataPromptsCommand(config.adaptors_dir));
 
   return cmd;
 }
