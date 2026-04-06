@@ -7,6 +7,7 @@ import { runMlxStream } from "../inference/mlx-runner.js";
 import { logger } from "../observability/logger.js";
 import { formatPrompt, applyWindow } from "../chat/history.js";
 import type { Turn } from "../chat/history.js";
+import { capturePrompt } from "../adaptors/prompt-log.js";
 
 export function createChatCommand(): Command {
   return new Command("chat")
@@ -84,6 +85,12 @@ export function createChatCommand(): Command {
           }
 
           history.push({ role: "user", content: trimmed });
+
+          if (config.capture_prompts && options.adaptor) {
+            const adaptorDir = join(config.adaptors_dir, options.adaptor);
+            capturePrompt(trimmed, adaptorDir);
+          }
+
           const windowedHistory = applyWindow(history);
           const prompt = formatPrompt(windowedHistory);
 
