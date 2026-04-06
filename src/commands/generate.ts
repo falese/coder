@@ -7,6 +7,7 @@ import { logger } from "../observability/logger.js";
 import { checkMemory } from "../inference/memory-gate.js";
 import { getModelEntry } from "../models/inspector.js";
 import { capturePrompt } from "../adaptors/prompt-log.js";
+import { cleanGeneratedOutput } from "../eval/runner.js";
 
 function collectStrings(val: string, acc: string[]): string[] {
   return [...acc, val];
@@ -105,10 +106,11 @@ export function createGenerateCommand(): Command {
             result = await resultPromise;
           } else {
             result = await runMlxBuffered(runOptions);
+            const cleaned = cleanGeneratedOutput(result.generatedText);
             if (options.output) {
-              writeFileSync(options.output, result.generatedText);
+              writeFileSync(options.output, cleaned);
             } else {
-              process.stdout.write(result.generatedText + "\n");
+              process.stdout.write(cleaned + "\n");
             }
           }
 
