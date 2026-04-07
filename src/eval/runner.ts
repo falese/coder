@@ -40,6 +40,8 @@ export interface EvalOptions {
   adaptorPath?: string;
   inputFile?: string;
   dryRun: boolean;
+  /** Called after each record is evaluated.  `current` is 1-based. */
+  onProgress?: (current: number, total: number, prompt: string) => void;
 }
 
 interface JsonlRecord {
@@ -451,8 +453,10 @@ export async function runEval(
   const evalSuiteFile = join(adaptorDir, "evals", "eval_suite.ts");
 
   const evalRecords: EvalRecord[] = [];
+  const totalRecords = records.length;
 
-  for (const record of records) {
+  for (let recIdx = 0; recIdx < totalRecords; recIdx++) {
+    const record = records[recIdx] as JsonlRecord;
     const { generatedText } = await runMlxBuffered({
       model: opts.modelPath,
       prompt: record.prompt,
@@ -503,6 +507,8 @@ export async function runEval(
         tests: testsResult.output,
       },
     });
+
+    opts.onProgress?.(recIdx + 1, totalRecords, record.prompt);
   }
 
   return {

@@ -7,13 +7,21 @@ import { createLogsCommand } from "../commands/logs.js";
 import { createAdaptorCommand } from "../commands/adaptor.js";
 import { createChatCommand } from "../commands/chat.js";
 import { createDataCommand } from "../commands/data.js";
+import { initUiContext } from "../ui/index.js";
 
 const program = new Command();
 
 program
   .name("coder")
   .description("Local AI code generation CLI")
-  .version("0.1.0");
+  .version("0.1.0")
+  .option("-q, --quiet", "Suppress all progress output (for scripting)");
+
+// Initialise UiContext before any subcommand action runs.
+program.hook("preAction", (root) => {
+  const opts = root.opts<{ quiet?: boolean }>();
+  initUiContext({ quiet: opts.quiet === true });
+});
 
 program.addCommand(createGenerateCommand());
 program.addCommand(createConfigCommand());

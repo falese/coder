@@ -8,6 +8,7 @@ import { checkMemory } from "../inference/memory-gate.js";
 import { getModelEntry } from "../models/inspector.js";
 import { capturePrompt } from "../adaptors/prompt-log.js";
 import { cleanGeneratedOutput } from "../eval/runner.js";
+import { ui, MascotSpinner, Spinner } from "../ui/index.js";
 
 function collectStrings(val: string, acc: string[]): string[] {
   return [...acc, val];
@@ -42,8 +43,8 @@ export function createGenerateCommand(): Command {
           const model = options.model ?? (config.default_model || undefined);
 
           if (!model) {
-            process.stderr.write(
-              "Error: no model specified. Use --model <path> or set default_model in config (coder config set default_model <path>)\n",
+            ui.error(
+              "no model specified. Use --model <path> or set default_model in config (coder config set default_model <path>)",
             );
             process.exit(1);
           }
@@ -96,16 +97,27 @@ export function createGenerateCommand(): Command {
 
           let result;
           if (options.stream === true && !dryRun) {
+            // Show dancing mascot while waiting for first token (TTFT gap)
+            const mascot = new MascotSpinner("Generating").start();
             const { stream, result: resultPromise } = runMlxStream(runOptions);
             const reader = stream.getReader();
+            let firstToken = true;
             for (;;) {
               const { done, value } = await reader.read();
               if (done) break;
+              if (firstToken) {
+                mascot.stop();
+                firstToken = false;
+              }
               process.stdout.write(value);
             }
+            if (firstToken) mascot.stop(); // dry-run or empty output
             result = await resultPromise;
           } else {
+            // Buffered mode: plain spinner while waiting
+            const spinner = new Spinner("Generating").start();
             result = await runMlxBuffered(runOptions);
+            spinner.stop();
             const cleaned = cleanGeneratedOutput(result.generatedText);
             if (options.output) {
               writeFileSync(options.output, cleaned);
@@ -137,17 +149,12 @@ export function createGenerateCommand(): Command {
           }
 
           if (result.tokensPerSecond !== undefined) {
-            process.stderr.write(
-              `Generation: ${String(result.tokensPerSecond)} tokens/sec\n`,
-            );
+            ui.dim(`Generation: ${String(result.tokensPerSecond)} tokens/sec`);
           }
         } catch (err) {
-          process.stderr.write(
-            `Error: ${err instanceof Error ? err.message : String(err)}\n`,
-          );
+          ui.error(err instanceof Error ? err.message : String(err));
           process.exit(1);
         }
       },
     );
 }
-

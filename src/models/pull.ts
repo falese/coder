@@ -1,5 +1,6 @@
 import { mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, basename } from "node:path";
+import { ui, ByteProgress } from "../ui/index.js";
 
 interface HfSibling {
   rfilename: string;
@@ -32,20 +33,6 @@ export async function streamFileToPath(
   }
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
-  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(0)} MB`;
-  return `${(bytes / 1e3).toFixed(0)} KB`;
-}
-
-function progressLine(filename: string, received: number, total: number): string {
-  if (total > 0) {
-    const pct = Math.floor((received / total) * 100);
-    return `\r  ${filename}  ${formatBytes(received)} / ${formatBytes(total)}  ${String(pct)}%   `;
-  }
-  return `\r  ${filename}  ${formatBytes(received)}`;
-}
-
 export async function pullModel(repoId: string, modelsDir: string): Promise<void> {
   if (process.env.CODER_DRY_RUN === "1") {
     process.stdout.write(`[dry-run] would pull ${repoId} into ${modelsDir}\n`);
@@ -70,6 +57,8 @@ export async function pullModel(repoId: string, modelsDir: string): Promise<void
   const modelDir = join(modelsDir, repoId);
   mkdirSync(modelDir, { recursive: true });
 
+  ui.divider(`Pulling model ${repoId}`);
+
   for (const { rfilename } of files) {
     const fileUrl = `https://huggingface.co/${repoId}/resolve/main/${rfilename}`;
     const destPath = join(modelDir, rfilename);
@@ -80,14 +69,14 @@ export async function pullModel(repoId: string, modelsDir: string): Promise<void
       throw new Error(`Failed to download ${rfilename}: ${String(fileResponse.status)}`);
     }
 
-    process.stderr.write(`  ${rfilename}\n`);
+    const progress = new ByteProgress(basename(rfilename));
 
     await streamFileToPath(fileResponse, destPath, (received, total) => {
-      process.stderr.write(progressLine(rfilename, received, total));
+      progress.update(received, total);
     });
 
-    process.stderr.write("\n");
+    progress.done();
   }
 
-  process.stdout.write(`\nModel ${repoId} downloaded to ${modelDir}\n`);
+  ui.success(`Model ${repoId} downloaded to ${modelDir}`);
 }
