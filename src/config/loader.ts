@@ -13,6 +13,7 @@ export { CONFIG_KEYS } from "./types.js";
 
 export const DEFAULT_CONFIG: CoderConfig = {
   default_model: "",
+  default_adaptor: "",
   adaptors_dir: "~/.coder/adaptors",
   models_dir: "~/.coder/models",
   logs_dir: "~/.coder/logs",

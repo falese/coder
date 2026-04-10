@@ -41,6 +41,7 @@ export function createGenerateCommand(): Command {
         try {
           const config = loadConfig();
           const model = options.model ?? (config.default_model || undefined);
+          const adaptor = options.adaptor ?? (config.default_adaptor || undefined);
 
           if (!model) {
             ui.error(
@@ -59,8 +60,8 @@ export function createGenerateCommand(): Command {
 
           // Resolve adaptor path — mlx_lm --adapter-path expects the weights dir
           let adaptorPath: string | undefined;
-          if (options.adaptor) {
-            adaptorPath = join(config.adaptors_dir, options.adaptor, "weights");
+          if (adaptor) {
+            adaptorPath = join(config.adaptors_dir, adaptor, "weights");
           }
 
           const dryRun = process.env.CODER_DRY_RUN === "1";
@@ -80,7 +81,7 @@ export function createGenerateCommand(): Command {
             event: "generation_start",
             ts: new Date().toISOString(),
             model,
-            adaptor: options.adaptor,
+            adaptor,
           });
 
           const runOptions = {
@@ -130,13 +131,13 @@ export function createGenerateCommand(): Command {
             event: "generation_complete",
             ts: new Date().toISOString(),
             model,
-            adaptor: options.adaptor,
+            adaptor,
             ttft_ms: result.ttftMs,
             tok_s: result.tokensPerSecond,
           });
 
-          if (config.capture_prompts && options.adaptor && !dryRun) {
-            const adaptorPackDir = join(config.adaptors_dir, options.adaptor);
+          if (config.capture_prompts && adaptor && !dryRun) {
+            const adaptorPackDir = join(config.adaptors_dir, adaptor);
             let adaptorVersion: string | undefined;
             const manifestPath = join(adaptorPackDir, "manifest.json");
             if (existsSync(manifestPath)) {

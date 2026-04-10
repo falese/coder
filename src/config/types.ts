@@ -3,6 +3,7 @@ export type LogLevel = (typeof LOG_LEVELS)[number];
 
 export interface CoderConfig {
   default_model: string;
+  default_adaptor: string;
   adaptors_dir: string;
   models_dir: string;
   logs_dir: string;
@@ -12,6 +13,7 @@ export interface CoderConfig {
 
 export const CONFIG_KEYS = [
   "default_model",
+  "default_adaptor",
   "adaptors_dir",
   "models_dir",
   "logs_dir",

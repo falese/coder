@@ -14,6 +14,7 @@ let tempDir: string;
 function makeConfig(overrides: Partial<CoderConfig> = {}): CoderConfig {
   return {
     default_model: "",
+    default_adaptor: "",
     adaptors_dir: join(tempDir, "adaptors"),
     models_dir: join(tempDir, "models"),
     logs_dir: join(tempDir, "logs"),

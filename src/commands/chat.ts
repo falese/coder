@@ -19,6 +19,7 @@ export function createChatCommand(): Command {
       async (options: { model?: string; adaptor?: string }) => {
         const config = loadConfig();
         const model = options.model ?? (config.default_model || undefined);
+        const adaptor = options.adaptor ?? (config.default_adaptor || undefined);
 
         if (!model) {
           ui.error("no model specified. Use --model <path> or set default_model in config.");
@@ -26,8 +27,8 @@ export function createChatCommand(): Command {
         }
 
         let systemFile: string | undefined;
-        if (options.adaptor) {
-          const adaptorDir = join(config.adaptors_dir, options.adaptor);
+        if (adaptor) {
+          const adaptorDir = join(config.adaptors_dir, adaptor);
           const systemPromptPath = join(adaptorDir, "prompts", "system.md");
           if (existsSync(systemPromptPath)) {
             systemFile = systemPromptPath;
@@ -85,8 +86,8 @@ export function createChatCommand(): Command {
 
           history.push({ role: "user", content: trimmed });
 
-          if (config.capture_prompts && options.adaptor) {
-            const adaptorDir = join(config.adaptors_dir, options.adaptor);
+          if (config.capture_prompts && adaptor) {
+            const adaptorDir = join(config.adaptors_dir, adaptor);
             capturePrompt(trimmed, adaptorDir);
           }
 
@@ -97,7 +98,7 @@ export function createChatCommand(): Command {
             event: "generation_start",
             ts: new Date().toISOString(),
             model,
-            adaptor: options.adaptor,
+            adaptor,
           });
 
           const { stream, result } = runMlxStream({
@@ -147,7 +148,7 @@ export function createChatCommand(): Command {
               event: "generation_complete",
               ts: new Date().toISOString(),
               model,
-              adaptor: options.adaptor,
+              adaptor,
               ttft_ms: finalResult.ttftMs,
               tok_s: finalResult.tokensPerSecond,
             });
