@@ -8,6 +8,7 @@ import { logger } from "../observability/logger.js";
 import { formatPrompt, applyWindow } from "../chat/history.js";
 import type { Turn } from "../chat/history.js";
 import { capturePrompt } from "../adaptors/prompt-log.js";
+import { ui, MascotSpinner } from "../ui/index.js";
 
 export function createChatCommand(): Command {
   return new Command("chat")
@@ -20,9 +21,7 @@ export function createChatCommand(): Command {
         const model = options.model ?? (config.default_model || undefined);
 
         if (!model) {
-          process.stderr.write(
-            "Error: no model specified. Use --model <path> or set default_model in config.\n",
-          );
+          ui.error("no model specified. Use --model <path> or set default_model in config.");
           process.exit(1);
         }
 
@@ -109,22 +108,32 @@ export function createChatCommand(): Command {
             rawPrompt: true,
           });
 
+          // Show Spark mascot while waiting for the first token
+          const mascot = new MascotSpinner("Thinking").start();
+
           const reader = stream.getReader();
           cancelCurrentStream = () => { reader.cancel().catch(() => undefined); };
           let assistantResponse = "";
+          let firstToken = true;
 
           try {
             for (;;) {
               const { done, value } = await reader.read();
               if (done) break;
+              if (firstToken) {
+                mascot.stop();
+                firstToken = false;
+              }
               // Strip chat end tokens before printing
               const chunk = value.replace(/<\|im_end\|>/g, "").replace(/!\[\]<\|im_end\|>/g, "");
               process.stdout.write(chunk);
               assistantResponse += chunk;
             }
+            if (firstToken) mascot.stop(); // empty response
             process.stdout.write("\n");
           } catch {
             // Cancelled via SIGINT
+            mascot.stop();
             cancelCurrentStream = null;
             rl.prompt();
             continue;

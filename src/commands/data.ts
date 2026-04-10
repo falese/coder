@@ -11,6 +11,7 @@ import { computeStats } from "../data/stats.js";
 import { ExtractConfigSchema } from "../data/types.js";
 import type { JsonlRecord } from "../data/types.js";
 import { createDataPromptsCommand } from "./data-prompts.js";
+import { ui } from "../ui/index.js";
 
 function writeJsonl(records: JsonlRecord[], outPath: string): void {
   const dir = dirname(outPath);
@@ -38,9 +39,7 @@ export function createDataCommand(): Command {
       const jsonl = records.map((r) => JSON.stringify(r)).join("\n") + "\n";
       if (options.output) {
         writeJsonl(records, options.output);
-        process.stderr.write(
-          `Ingested ${String(records.length)} records → ${options.output}\n`,
-        );
+        ui.success(`Ingested ${String(records.length)} records → ${options.output}`);
       } else {
         process.stdout.write(jsonl);
       }
@@ -62,9 +61,7 @@ export function createDataCommand(): Command {
         const raw = JSON.parse(readFileSync(extractJsonPath, "utf-8")) as unknown;
         extractConfig = ExtractConfigSchema.parse(raw);
       } catch (err) {
-        process.stderr.write(
-          `Error: ${err instanceof Error ? err.message : String(err)}\n`,
-        );
+        ui.error(err instanceof Error ? err.message : String(err));
         process.exit(1);
       }
 
@@ -99,9 +96,7 @@ export function createDataCommand(): Command {
 
       if (options.output) {
         writeJsonl(records, options.output);
-        process.stderr.write(
-          `Extracted ${String(records.length)} records → ${options.output}\n`,
-        );
+        ui.success(`Extracted ${String(records.length)} records → ${options.output}`);
       } else {
         process.stdout.write(records.map((r) => JSON.stringify(r)).join("\n") + "\n");
       }
@@ -116,9 +111,7 @@ export function createDataCommand(): Command {
       try {
         records = readJsonl(file);
       } catch (err) {
-        process.stderr.write(
-          `Error: ${err instanceof Error ? err.message : String(err)}\n`,
-        );
+        ui.error(err instanceof Error ? err.message : String(err));
         process.exit(1);
       }
 
@@ -130,9 +123,7 @@ export function createDataCommand(): Command {
       } else {
         process.stdout.write(jsonl);
       }
-      process.stderr.write(
-        `Removed ${String(removed)} duplicate(s). ${String(deduped.length)} records remain.\n`,
-      );
+      ui.success(`Removed ${String(removed)} duplicate(s). ${String(deduped.length)} records remain.`);
     });
 
   cmd
@@ -159,9 +150,7 @@ export function createDataCommand(): Command {
           (r) => (r.prompt.length + r.completion.length) / 4 < minTok,
         );
         if (short.length > 0) {
-          process.stderr.write(
-            `Warning: ${String(short.length)} record(s) below ${String(minTok)} token threshold\n`,
-          );
+          ui.warn(`${String(short.length)} record(s) below ${String(minTok)} token threshold`);
         }
       }
       if (summary.invalid > 0) {
@@ -185,9 +174,7 @@ export function createDataCommand(): Command {
         try {
           records = readJsonl(file);
         } catch (err) {
-          process.stderr.write(
-            `Error: ${err instanceof Error ? err.message : String(err)}\n`,
-          );
+          ui.error(err instanceof Error ? err.message : String(err));
           process.exit(1);
         }
 
@@ -199,9 +186,7 @@ export function createDataCommand(): Command {
           );
           const dropped = before - records.length;
           if (dropped > 0) {
-            process.stderr.write(
-              `Dropped ${String(dropped)} record(s) below ${String(options.minTokens)} token threshold\n`,
-            );
+            ui.warn(`Dropped ${String(dropped)} record(s) below ${String(options.minTokens)} token threshold`);
           }
         }
 
@@ -224,8 +209,8 @@ export function createDataCommand(): Command {
         writeJsonl(train, trainPath);
         writeJsonl(evalSet, validPath);
 
-        process.stderr.write(`Train: ${String(train.length)} records → ${trainPath}\n`);
-        process.stderr.write(`Eval:  ${String(evalSet.length)} records → ${validPath}\n`);
+        ui.success(`Train: ${String(train.length)} records → ${trainPath}`);
+        ui.success(`Eval:  ${String(evalSet.length)} records → ${validPath}`);
       },
     );
 
@@ -237,9 +222,7 @@ export function createDataCommand(): Command {
       try {
         records = readJsonl(file);
       } catch (err) {
-        process.stderr.write(
-          `Error: ${err instanceof Error ? err.message : String(err)}\n`,
-        );
+        ui.error(err instanceof Error ? err.message : String(err));
         process.exit(1);
       }
 

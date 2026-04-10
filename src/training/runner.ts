@@ -12,6 +12,7 @@ import { checkPreflight } from "../inference/mlx-runner.js";
 import { logger } from "../observability/logger.js";
 import { generateLoraYaml } from "./config.js";
 import type { TrainConfig } from "./config.js";
+import { sparkline } from "../ui/index.js";
 
 export class TrainingDivergedError extends Error {
   constructor(public readonly lossAtAbort: number, public readonly iterAtAbort: number) {
@@ -109,6 +110,7 @@ export async function runMlxTrain(
   let finalLoss: number | undefined;
   let stdoutOutput = "";
   const recentLosses: number[] = []; // rolling window for divergence detection
+  const lossHistory: number[] = []; // for sparkline display
 
   for (;;) {
     const { done, value } = await reader.read();
@@ -121,10 +123,16 @@ export async function runMlxTrain(
     lineBuffer = lines.pop() ?? "";
 
     for (const line of lines) {
-      process.stderr.write(line + "\n");
       const parsed = parseLossLine(line);
       if (parsed) {
         finalLoss = parsed.loss;
+        lossHistory.push(parsed.loss);
+
+        // Sparkline from the last 16 data points
+        const spark = sparkline(lossHistory.slice(-16));
+        process.stderr.write(
+          `  Iter ${String(parsed.iter).padStart(4)}  loss ${parsed.loss.toFixed(4)}  ${spark}\n`,
+        );
 
         // #43: detect divergence — accumulate all losses, but only check after iter 20
         recentLosses.push(parsed.loss);

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { loadConfig } from "../config/loader.js";
 import { listModels, getModelEntry } from "../models/inspector.js";
 import { pullModel } from "../models/pull.js";
+import { ui, renderTable } from "../ui/index.js";
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
@@ -30,16 +31,18 @@ export function createModelsCommand(): Command {
       const modelsDir = getModelsDir();
       const entries = listModels(modelsDir);
 
-      const header = `${"NAME".padEnd(55)} ${"QUANT".padEnd(7)} ${"DISK".padEnd(10)} MEMORY`;
-      process.stdout.write(header + "\n");
+      const rows = entries.map((e) => [
+        e.name,
+        `${String(e.quantBits)}-bit`,
+        formatBytes(e.diskSizeBytes),
+        formatBytes(e.memoryEstimateGb * 1e9),
+      ]);
 
-      for (const entry of entries) {
-        const quant = `${String(entry.quantBits)}-bit`;
-        const disk = formatBytes(entry.diskSizeBytes);
-        const memory = formatBytes(entry.memoryEstimateGb * 1e9);
-        const line = `${entry.name.padEnd(55)} ${quant.padEnd(7)} ${disk.padEnd(10)} ${memory}\n`;
-        process.stdout.write(line);
-      }
+      process.stdout.write(renderTable(
+        ["NAME", "QUANT", "DISK", "MEMORY"],
+        rows,
+        { align: ["left", "left", "right", "right"] },
+      ));
     });
 
   cmd
@@ -50,7 +53,7 @@ export function createModelsCommand(): Command {
       const modelDir = resolveModelDir(modelsDir, name);
 
       if (!existsSync(modelDir)) {
-        process.stderr.write(`Error: model "${name}" not found in ${modelsDir}\n`);
+        ui.error(`model "${name}" not found in ${modelsDir}`);
         process.exit(1);
       }
 
@@ -70,12 +73,12 @@ export function createModelsCommand(): Command {
       const modelDir = resolveModelDir(modelsDir, name);
 
       if (!existsSync(modelDir)) {
-        process.stderr.write(`Error: model "${name}" not found in ${modelsDir}\n`);
+        ui.error(`model "${name}" not found in ${modelsDir}`);
         process.exit(1);
       }
 
       rmSync(modelDir, { recursive: true, force: true });
-      process.stdout.write(`Removed ${name}\n`);
+      ui.success(`Removed ${name}`);
     });
 
   cmd
@@ -86,9 +89,7 @@ export function createModelsCommand(): Command {
       try {
         await pullModel(repoId, modelsDir);
       } catch (err) {
-        process.stderr.write(
-          `Error: ${err instanceof Error ? err.message : String(err)}\n`,
-        );
+        ui.error(err instanceof Error ? err.message : String(err));
         process.exit(1);
       }
     });

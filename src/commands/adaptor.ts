@@ -14,6 +14,7 @@ import { runSelfImprove } from "../adaptors/self-improve.js";
 import { logger } from "../observability/logger.js";
 import { join } from "node:path";
 import { existsSync, writeFileSync } from "node:fs";
+import { ui, renderTable, StepProgress, Spinner } from "../ui/index.js";
 
 function getAdaptorsDir(): string {
   return loadConfig().adaptors_dir;
@@ -29,17 +30,17 @@ export function createAdaptorCommand(): Command {
       const adaptorsDir = getAdaptorsDir();
       const entries = listAdaptors(adaptorsDir);
 
-      const header = `${"NAME".padEnd(20)} ${"VERSION".padEnd(10)} ${"DOMAIN".padEnd(15)} BASE_MODEL`;
-      process.stdout.write(header + "\n");
+      const rows = entries.map((e) => [
+        e.name,
+        e.manifest.version,
+        e.manifest.domain,
+        e.manifest.base_model,
+      ]);
 
-      for (const entry of entries) {
-        const line =
-          `${entry.name.padEnd(20)} ` +
-          `${entry.manifest.version.padEnd(10)} ` +
-          `${entry.manifest.domain.padEnd(15)} ` +
-          `${entry.manifest.base_model}\n`;
-        process.stdout.write(line);
-      }
+      process.stdout.write(renderTable(
+        ["NAME", "VERSION", "DOMAIN", "BASE_MODEL"],
+        rows,
+      ));
     });
 
   cmd
@@ -49,12 +50,11 @@ export function createAdaptorCommand(): Command {
     .action(async (name: string, options: { fromGit: string }) => {
       const adaptorsDir = getAdaptorsDir();
       try {
+        const spinner = new Spinner(`Installing ${name}`).start();
         await installAdaptor(name, options.fromGit, adaptorsDir);
-        process.stdout.write(`Installed ${name}\n`);
+        spinner.succeed(`Installed ${name}`);
       } catch (err) {
-        process.stderr.write(
-          `Error: ${err instanceof Error ? err.message : String(err)}\n`,
-        );
+        ui.error(err instanceof Error ? err.message : String(err));
         process.exit(1);
       }
     });
@@ -65,12 +65,11 @@ export function createAdaptorCommand(): Command {
     .action(async (name: string) => {
       const adaptorsDir = getAdaptorsDir();
       try {
+        const spinner = new Spinner(`Updating ${name}`).start();
         await updateAdaptor(name, adaptorsDir);
-        process.stdout.write(`Updated ${name}\n`);
+        spinner.succeed(`Updated ${name}`);
       } catch (err) {
-        process.stderr.write(
-          `Error: ${err instanceof Error ? err.message : String(err)}\n`,
-        );
+        ui.error(err instanceof Error ? err.message : String(err));
         process.exit(1);
       }
     });
@@ -83,7 +82,7 @@ export function createAdaptorCommand(): Command {
       const adaptorDir = join(adaptorsDir, name);
 
       if (!existsSync(adaptorDir)) {
-        process.stderr.write(`Error: adaptor "${name}" not found\n`);
+        ui.error(`adaptor "${name}" not found`);
         process.exit(1);
       }
 
@@ -111,9 +110,7 @@ export function createAdaptorCommand(): Command {
           );
         }
       } catch (err) {
-        process.stderr.write(
-          `Error: ${err instanceof Error ? err.message : String(err)}\n`,
-        );
+        ui.error(err instanceof Error ? err.message : String(err));
         process.exit(1);
       }
     });
@@ -125,11 +122,9 @@ export function createAdaptorCommand(): Command {
       const adaptorsDir = getAdaptorsDir();
       try {
         removeAdaptor(name, adaptorsDir);
-        process.stdout.write(`Removed ${name}\n`);
+        ui.success(`Removed ${name}`);
       } catch (err) {
-        process.stderr.write(
-          `Error: ${err instanceof Error ? err.message : String(err)}\n`,
-        );
+        ui.error(err instanceof Error ? err.message : String(err));
         process.exit(1);
       }
     });
@@ -142,12 +137,11 @@ export function createAdaptorCommand(): Command {
       const dryRun = process.env.CODER_DRY_RUN === "1";
       try {
         const config = loadTrainConfig(options.config);
+        // Training output (loss lines + sparkline) written directly to stderr inside runMlxTrain
         await runMlxTrain(config, dryRun);
-        process.stdout.write("Training complete.\n");
+        ui.success("Training complete.");
       } catch (err) {
-        process.stderr.write(
-          `Error: ${err instanceof Error ? err.message : String(err)}\n`,
-        );
+        ui.error(err instanceof Error ? err.message : String(err));
         process.exit(1);
       }
     });
@@ -170,9 +164,7 @@ export function createAdaptorCommand(): Command {
         const modelPath = options.model ?? config.default_model;
 
         if (!modelPath && !dryRun) {
-          process.stderr.write(
-            "Error: no model specified. Use --model or set default_model in config\n",
-          );
+          ui.error("no model specified. Use --model or set default_model in config");
           process.exit(1);
         }
 
@@ -180,12 +172,14 @@ export function createAdaptorCommand(): Command {
         const adaptorDir = join(adaptorsDir, name);
 
         if (!existsSync(adaptorDir)) {
-          process.stderr.write(`Error: adaptor "${name}" not found\n`);
+          ui.error(`adaptor "${name}" not found`);
           process.exit(1);
         }
 
         const weightsPath = join(adaptorDir, "weights");
         const adaptorPath = options.baseline === true ? undefined : weightsPath;
+
+        const progress = new StepProgress("Evaluating prompt");
 
         try {
           const summary = await runEval(adaptorDir, {
@@ -193,7 +187,12 @@ export function createAdaptorCommand(): Command {
             adaptorPath,
             inputFile: options.input,
             dryRun,
+            onProgress: (current, total, prompt) => {
+              progress.tick(current, total, prompt.slice(0, 40));
+            },
           });
+
+          progress.done(`${String(summary.records.length)} prompts evaluated`);
 
           process.stdout.write(formatEvalTable(summary) + "\n");
 
@@ -203,7 +202,7 @@ export function createAdaptorCommand(): Command {
 
           if (options.report) {
             writeFileSync(options.report, formatEvalReport(summary));
-            process.stdout.write(`Report written to ${options.report}\n`);
+            ui.success(`Report written to ${options.report}`);
           }
 
           const manifestPath = join(adaptorDir, "manifest.json");
@@ -211,9 +210,7 @@ export function createAdaptorCommand(): Command {
 
           const scoreField =
             options.baseline === true ? "baseline_pass_rate" : "eval_pass_rate";
-          process.stdout.write(
-            `Updated ${scoreField}: ${summary.meanComposite.toFixed(3)}\n`,
-          );
+          ui.success(`Updated ${scoreField}: ${summary.meanComposite.toFixed(3)}`);
 
           logger.logEvent({
             event: "eval_complete",
@@ -226,9 +223,7 @@ export function createAdaptorCommand(): Command {
             record_count: summary.records.length,
           });
         } catch (err) {
-          process.stderr.write(
-            `Error: ${err instanceof Error ? err.message : String(err)}\n`,
-          );
+          ui.error(err instanceof Error ? err.message : String(err));
           process.exit(1);
         }
       },
@@ -261,9 +256,7 @@ export function createAdaptorCommand(): Command {
         const modelPath = options.model ?? config.default_model;
 
         if (!modelPath && !dryRun) {
-          process.stderr.write(
-            "Error: no model specified. Use --model or set default_model in config\n",
-          );
+          ui.error("no model specified. Use --model or set default_model in config");
           process.exit(1);
         }
 
@@ -271,7 +264,7 @@ export function createAdaptorCommand(): Command {
         const adaptorDir = join(adaptorsDir, name);
 
         if (!existsSync(adaptorDir)) {
-          process.stderr.write(`Error: adaptor "${name}" not found\n`);
+          ui.error(`adaptor "${name}" not found`);
           process.exit(1);
         }
 
@@ -281,10 +274,11 @@ export function createAdaptorCommand(): Command {
             : parseFloat(options.temperature);
 
         try {
+          const totalRounds = parseInt(options.rounds, 10);
           const results = await runSelfImprove({
             adaptorDir,
             modelPath,
-            rounds: parseInt(options.rounds, 10),
+            rounds: totalRounds,
             samplesPerPrompt: parseInt(options.samples, 10),
             threshold: parseFloat(options.threshold),
             temperature,
@@ -293,13 +287,15 @@ export function createAdaptorCommand(): Command {
 
           for (const r of results) {
             const delta = r.scoreAfter - r.scoreBefore;
-            const sign = delta >= 0 ? "+" : "";
-            const tag = r.committed ? "[committed]" : "[rolled back]";
+            const tag = r.committed
+              ? ui.scoreDelta(delta) + "  [committed]"
+              : ui.scoreDelta(delta) + "  [rolled back]";
+            ui.divider(`Round ${String(r.round)} / ${String(results.length)}`);
             process.stderr.write(
-              `Round ${String(r.round)}/${String(results.length)}: ` +
-              `generated ${String(r.generated)}  filtered (≥${options.threshold}): ${String(r.filtered)}  ` +
+              `  generated ${String(r.generated)}  ` +
+              `filtered (≥${options.threshold}): ${String(r.filtered)}  ` +
               `eval: ${r.scoreBefore.toFixed(3)} → ${r.scoreAfter.toFixed(3)} ` +
-              `(${sign}${delta.toFixed(3)})  ${tag}\n`,
+              `(${tag})\n`,
             );
           }
 
@@ -308,14 +304,13 @@ export function createAdaptorCommand(): Command {
             (score, r) => (r.committed ? r.scoreAfter : score),
             results[0]?.scoreBefore ?? 0,
           );
-          process.stdout.write(
-            `Self-improvement complete. Final score: ${finalScore.toFixed(3)} ` +
-            `(rounds committed: ${String(committed)}/${String(results.length)})\n`,
+          ui.divider();
+          ui.success(
+            `Self-improvement complete.  Final score: ${finalScore.toFixed(3)}  ` +
+            `(rounds committed: ${String(committed)}/${String(totalRounds)})`,
           );
         } catch (err) {
-          process.stderr.write(
-            `Error: ${err instanceof Error ? err.message : String(err)}\n`,
-          );
+          ui.error(err instanceof Error ? err.message : String(err));
           process.exit(1);
         }
       },
