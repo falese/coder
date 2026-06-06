@@ -16,7 +16,8 @@ export function startServer(ctx: ServeContext, port: number): RunningServer {
     fetch: (req: Request): Response | Promise<Response> => handleRequest(req, ctx),
   });
   return {
-    port: server.port,
+    // Bun types server.port as number | undefined; fall back to the requested port.
+    port: server.port ?? port,
     stop: () => {
       server.stop(true);
     },
