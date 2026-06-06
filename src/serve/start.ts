@@ -19,7 +19,7 @@ export function startServer(ctx: ServeContext, port: number): RunningServer {
     // Bun types server.port as number | undefined; fall back to the requested port.
     port: server.port ?? port,
     stop: () => {
-      server.stop(true);
+      void server.stop(true);
     },
   };
 }
