@@ -142,6 +142,32 @@ describe("setConfigValue and getConfigValue", () => {
 // logs_dir config key
 // ---------------------------------------------------------------------------
 
+describe("port config", () => {
+  test("port is in CONFIG_KEYS", () => {
+    expect((CONFIG_KEYS as readonly string[]).includes("port")).toBe(true);
+  });
+
+  test("defaults to 3991 when absent from file", () => {
+    const config = loadConfig();
+    expect(config.port).toBe("3991");
+  });
+
+  test("reads a string port from the config file", () => {
+    writeFileSync(configPath, `port = "4000"\n`);
+    expect(loadConfig().port).toBe("4000");
+  });
+
+  test("coerces a bare integer port from TOML to string", () => {
+    writeFileSync(configPath, `port = 4321\n`);
+    expect(loadConfig().port).toBe("4321");
+  });
+
+  test("set then get round-trips the port", () => {
+    setConfigValue("port", "5005");
+    expect(getConfigValue("port")).toBe("5005");
+  });
+});
+
 describe("logs_dir config", () => {
   test("logs_dir is in CONFIG_KEYS", () => {
     expect((CONFIG_KEYS as readonly string[]).includes("logs_dir")).toBe(true);

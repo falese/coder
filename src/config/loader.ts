@@ -17,6 +17,7 @@ export const DEFAULT_CONFIG: CoderConfig = {
   models_dir: "~/.coder/models",
   logs_dir: "~/.coder/logs",
   log_level: "info",
+  port: "3991",
 };
 
 export function resolveConfigPath(): string {
@@ -54,6 +55,10 @@ function mergeRawIntoConfig(
       if (typeof value === "string" && (LOG_LEVELS as readonly string[]).includes(value)) {
         config.log_level = value as CoderConfig["log_level"];
       }
+    } else if (key === "port") {
+      // TOML may store port as a bare integer; coerce to the string form we keep.
+      if (typeof value === "string") config.port = value;
+      else if (typeof value === "number") config.port = String(value);
     } else if (typeof value === "string") {
       config[key] = value;
     }
@@ -72,6 +77,7 @@ export function loadConfig(): CoderConfig {
       models_dir: DEFAULT_CONFIG.models_dir,
       logs_dir: DEFAULT_CONFIG.logs_dir,
       log_level: DEFAULT_CONFIG.log_level,
+      port: DEFAULT_CONFIG.port,
     };
     writeFileSync(configPath, stringify(toWrite));
     const config = { ...DEFAULT_CONFIG };
@@ -114,6 +120,7 @@ export function setConfigValue(key: ConfigKey, value: string): void {
     models_dir: DEFAULT_CONFIG.models_dir,
     logs_dir: DEFAULT_CONFIG.logs_dir,
     log_level: DEFAULT_CONFIG.log_level,
+    port: DEFAULT_CONFIG.port,
   };
 
   if (existsSync(configPath)) {

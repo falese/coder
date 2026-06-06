@@ -7,6 +7,7 @@ import { createLogsCommand } from "../commands/logs.js";
 import { createAdaptorCommand } from "../commands/adaptor.js";
 import { createChatCommand } from "../commands/chat.js";
 import { createDataCommand } from "../commands/data.js";
+import { createServeCommand } from "../commands/serve.js";
 
 const program = new Command();
 
@@ -22,5 +23,6 @@ program.addCommand(createLogsCommand());
 program.addCommand(createAdaptorCommand());
 program.addCommand(createChatCommand());
 program.addCommand(createDataCommand());
+program.addCommand(createServeCommand());
 
 await program.parseAsync(process.argv);
