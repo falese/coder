@@ -152,7 +152,9 @@ coder data validate <file.jsonl>
 coder data split <file.jsonl>
 coder data stats <file.jsonl>
 coder data prompts list|stats|deduplicate|purge --adaptor <name>
-coder serve [--port <p>] [--model <path>] [--adaptor <name>]
+coder serve [--port <p>] [--model <path>] [--adaptor <name>]   # /generate accepts messages[] + sessionId + traits; POST /episodes/save
+coder episodes list|show <id>|export [--all|--id <id>] [-o <file>]
+coder graph build|show [--top <n>]|query <concept>
 ```
 
 ---
@@ -165,6 +167,8 @@ default_adaptor = ""        # adaptor name applied when --adaptor is omitted
 adaptors_dir = "~/.coder/adaptors"
 models_dir = "~/.coder/models"
 logs_dir = "~/.coder/logs"
+episodes_dir = "~/.coder/episodes"  # captured thinking-session episodes
+graph_dir = "~/.coder/graph"        # knowledge graph (knowledge-graph.json)
 log_level = "info"          # debug | info | warn | error
 port = "3991"               # default port for `coder serve`
 capture_prompts = false     # opt-in: log prompts to <adaptor>/data/prompt-log.jsonl for SSD
@@ -226,6 +230,9 @@ Required metrics:
 | Prompt capture              | Opt-in `capture_prompts`. `generate`/`chat`/`serve` append the user prompt to `<adaptor>/data/prompt-log.jsonl` (prompts only). Never captures in dry-run for CLI; `serve` captures the real user prompt regardless. See `docs/recursive-self-improvement-proposal.md`. |
 | Self-distillation (SSD)     | `coder adaptor self-improve`: sample k completions per captured prompt → eval-score → retrain on high-scorers → commit only if eval improves, else roll back. Loss-spike divergence aborts the round. |
 | Persona trait control       | Prompt-layer v1: a trait vector (`formality`/`sarcasm`/`verbosity`, 1–7) is folded into the system prompt at request time (`/generate` `traits` field). No live LoRA blending (one adaptor per session); adapter-layer traits deferred. |
+| Cross-turn memory           | `/generate` accepts `messages[]`; prior turns are windowed + ChatML-formatted server-side (reusing `formatPrompt`/`applyWindow`, the `coder chat` path). Single-`prompt` requests are unchanged. |
+| Episodes                    | A thinking session (`sessionId`) is accumulated server-side into an Episode (turns with thought/final + concept threads) and persisted under `episodes_dir`. Boundary = explicit `POST /episodes/save` + idle-timeout fallback flush. `episodeToJsonl` bakes episodes into `{prompt, completion}` for the data/train pipeline. |
+| Knowledge graph             | `coder graph build` derives a graph from episode concept threads (threads → nodes, within-episode co-occurrence → weighted edges) stored at `graph_dir/knowledge-graph.json`. Consumption = **bake into training data** (graph informs episode export). Inference-time RAG/graph-retrieval remains **out of scope (v1)**. |
 
 ---
 

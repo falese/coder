@@ -4,6 +4,10 @@ import { runMlxStream } from "../inference/mlx-runner.js";
 import { stripFraming, parseChannels } from "./clean.js";
 import { capturePrompt } from "../adaptors/prompt-log.js";
 import { applyTraits, resolveTraits } from "../persona/traits.js";
+import { formatPrompt, applyWindow } from "../chat/history.js";
+import type { Turn } from "../chat/history.js";
+import { parseThreads } from "../episodes/threads.js";
+import type { SessionRecorder } from "../episodes/recorder.js";
 
 /**
  * Local SSE inference server context.
@@ -21,6 +25,8 @@ export interface ServeContext {
   capturePrompts?: boolean;
   /** Adaptor pack root (…/adaptors/<name>) — capture target + manifest source. */
   adaptorPackDir?: string;
+  /** When set, completed exchanges are recorded into episodes by sessionId. */
+  recorder?: SessionRecorder;
 }
 
 interface GenerateBody {
@@ -29,6 +35,55 @@ interface GenerateBody {
   maxTokens?: unknown;
   /** Optional persona trait dial, e.g. { sarcasm: 3 }. Merged into the system prompt. */
   traits?: unknown;
+  /** Prior conversation turns for cross-turn memory (ChatML-formatted server-side). */
+  messages?: unknown;
+  /** Groups exchanges into one episode. */
+  sessionId?: unknown;
+}
+
+interface NormalizedRequest {
+  /** Final prompt string handed to mlx_lm. */
+  prompt: string;
+  /** True when the prompt is pre-formatted ChatML (pass --ignore-chat-template). */
+  rawPrompt: boolean;
+  /** The latest user input, recorded as the user turn of an episode. */
+  userContent: string;
+}
+
+function isTurnArray(v: unknown): v is Turn[] {
+  return (
+    Array.isArray(v) &&
+    v.every(
+      (t) =>
+        typeof t === "object" &&
+        t !== null &&
+        (t as { role?: unknown }).role !== undefined &&
+        ((t as { role: unknown }).role === "user" || (t as { role: unknown }).role === "assistant") &&
+        typeof (t as { content?: unknown }).content === "string",
+    )
+  );
+}
+
+/**
+ * Build the effective prompt for a request. With `messages`, prior turns are
+ * windowed + ChatML-formatted server-side (reusing the `coder chat` path) so an
+ * episode is a coherent multi-turn session; an optional `prompt` is appended as
+ * the trailing user turn. Without `messages`, the single `prompt` is used as-is
+ * (mlx_lm applies its own chat template). Exported pure for testing.
+ */
+export function buildPromptFromBody(body: { prompt?: unknown; messages?: unknown }): NormalizedRequest {
+  const trailing = typeof body.prompt === "string" ? body.prompt : "";
+  if (isTurnArray(body.messages) && body.messages.length > 0) {
+    const turns: Turn[] = [...body.messages];
+    if (trailing.length > 0) turns.push({ role: "user", content: trailing });
+    const lastUser = [...turns].reverse().find((t) => t.role === "user");
+    return {
+      prompt: formatPrompt(applyWindow(turns)),
+      rawPrompt: true,
+      userContent: lastUser?.content ?? trailing,
+    };
+  }
+  return { prompt: trailing, rawPrompt: false, userContent: trailing };
 }
 
 /**
@@ -77,7 +132,18 @@ function sseEvent(obj: unknown): string {
   return `data: ${JSON.stringify(obj)}\n\n`;
 }
 
-function buildGenerateResponse(prompt: string, system: string | undefined, maxTokens: number, ctx: ServeContext): Response {
+interface GenerateParams {
+  prompt: string;
+  system: string | undefined;
+  maxTokens: number;
+  rawPrompt: boolean;
+  sessionId?: string;
+  /** The latest user input, for episode recording (may differ from `prompt`). */
+  userContent: string;
+}
+
+function buildGenerateResponse(params: GenerateParams, ctx: ServeContext): Response {
+  const { prompt, system, maxTokens, rawPrompt, sessionId, userContent } = params;
   const { stream: tokenStream, result } = runMlxStream({
     model: ctx.model,
     prompt,
@@ -85,6 +151,7 @@ function buildGenerateResponse(prompt: string, system: string | undefined, maxTo
     dryRun: ctx.dryRun,
     adaptor: ctx.adaptorPath,
     systemFile: system,
+    rawPrompt,
   });
 
   const encoder = new TextEncoder();
@@ -139,9 +206,17 @@ function buildGenerateResponse(prompt: string, system: string | undefined, maxTo
           tokensPerSec: r.tokensPerSecond ?? 0,
           totalTokens,
         });
-        // The prompt is the user's real input regardless of dry-run, so capture
-        // it here once the generation completes successfully.
-        maybeCapture(prompt, ctx);
+        // The user input is real regardless of dry-run, so capture it once the
+        // generation completes successfully.
+        maybeCapture(userContent, ctx);
+        if (ctx.recorder && sessionId !== undefined) {
+          ctx.recorder.record(sessionId, {
+            userContent,
+            final,
+            ...(thought.length > 0 ? { thought } : {}),
+            threads: parseThreads(final),
+          });
+        }
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
       } catch (err) {
         send({
@@ -177,14 +252,41 @@ async function handleGenerate(req: Request, ctx: ServeContext): Promise<Response
     return json({ type: "error", message: "Invalid JSON body" }, 400);
   }
 
-  if (typeof body.prompt !== "string" || body.prompt.length === 0) {
-    return json({ type: "error", message: "Field 'prompt' is required" }, 400);
+  const hasPrompt = typeof body.prompt === "string" && body.prompt.length > 0;
+  const hasMessages = Array.isArray(body.messages) && body.messages.length > 0;
+  if (!hasPrompt && !hasMessages) {
+    return json({ type: "error", message: "Field 'prompt' or 'messages' is required" }, 400);
   }
 
   const maxTokens = typeof body.maxTokens === "number" ? body.maxTokens : 512;
   const system = resolveRequestSystem(body.system, body.traits);
+  const { prompt, rawPrompt, userContent } = buildPromptFromBody(body);
+  const sessionId = typeof body.sessionId === "string" ? body.sessionId : undefined;
 
-  return buildGenerateResponse(body.prompt, system, maxTokens, ctx);
+  return buildGenerateResponse(
+    { prompt, system, maxTokens, rawPrompt, sessionId, userContent },
+    ctx,
+  );
+}
+
+async function handleEpisodeSave(req: Request, ctx: ServeContext): Promise<Response> {
+  if (!ctx.recorder) {
+    return json({ type: "error", message: "Episode recording is not enabled" }, 400);
+  }
+  let body: { sessionId?: unknown };
+  try {
+    body = (await req.json()) as { sessionId?: unknown };
+  } catch {
+    return json({ type: "error", message: "Invalid JSON body" }, 400);
+  }
+  if (typeof body.sessionId !== "string" || body.sessionId.length === 0) {
+    return json({ type: "error", message: "Field 'sessionId' is required" }, 400);
+  }
+  const episode = ctx.recorder.save(body.sessionId);
+  if (!episode) {
+    return json({ type: "error", message: `No open session "${body.sessionId}"` }, 404);
+  }
+  return json({ status: "saved", id: episode.id, turns: episode.turns.length, threads: episode.threads });
 }
 
 /**
@@ -204,6 +306,10 @@ export async function handleRequest(req: Request, ctx: ServeContext): Promise<Re
 
   if (req.method === "POST" && url.pathname === "/generate") {
     return handleGenerate(req, ctx);
+  }
+
+  if (req.method === "POST" && url.pathname === "/episodes/save") {
+    return handleEpisodeSave(req, ctx);
   }
 
   return json({ type: "error", message: "Not found" }, 404);

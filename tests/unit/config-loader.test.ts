@@ -213,6 +213,38 @@ describe("capture_prompts config", () => {
   });
 });
 
+describe("episodes_dir and graph_dir config", () => {
+  test("both keys are in CONFIG_KEYS", () => {
+    expect((CONFIG_KEYS as readonly string[]).includes("episodes_dir")).toBe(true);
+    expect((CONFIG_KEYS as readonly string[]).includes("graph_dir")).toBe(true);
+  });
+
+  test("default to ~/.coder paths with tilde expanded", () => {
+    const config = loadConfig();
+    expect(config.episodes_dir).not.toContain("~");
+    expect(config.episodes_dir).toContain("episodes");
+    expect(config.graph_dir).not.toContain("~");
+    expect(config.graph_dir).toContain("graph");
+  });
+
+  test("expand ~ from the config file", () => {
+    writeFileSync(
+      configPath,
+      `episodes_dir = "~/.coder/eps"\ngraph_dir = "~/.coder/kg"\n`,
+    );
+    const config = loadConfig();
+    expect(config.episodes_dir).not.toContain("~");
+    expect(config.episodes_dir).toContain("eps");
+    expect(config.graph_dir).not.toContain("~");
+    expect(config.graph_dir).toContain("kg");
+  });
+
+  test("set then get round-trips episodes_dir", () => {
+    setConfigValue("episodes_dir", "/custom/eps");
+    expect(getConfigValue("episodes_dir")).toBe("/custom/eps");
+  });
+});
+
 describe("logs_dir config", () => {
   test("logs_dir is in CONFIG_KEYS", () => {
     expect((CONFIG_KEYS as readonly string[]).includes("logs_dir")).toBe(true);

@@ -6,7 +6,12 @@ import { logger } from "../observability/logger.js";
 import { checkMemory } from "../inference/memory-gate.js";
 import { getModelEntry } from "../models/inspector.js";
 import { startServer } from "../serve/start.js";
+import { createSessionRecorder } from "../episodes/recorder.js";
 import type { ServeContext } from "../serve/server.js";
+
+/** Flush idle episodes every 30s; a session is idle after 5 min of silence. */
+const IDLE_SWEEP_MS = 30_000;
+const IDLE_TIMEOUT_MS = 5 * 60_000;
 
 export function createServeCommand(): Command {
   return new Command("serve")
@@ -57,14 +62,37 @@ export function createServeCommand(): Command {
             }
           }
 
+          const recorder = createSessionRecorder({
+            dir: config.episodes_dir,
+            model,
+            ...(adaptorName !== undefined ? { adaptor: adaptorName } : {}),
+          });
+
           const ctx: ServeContext = {
             model,
             adaptorPath,
             dryRun,
             capturePrompts: config.capture_prompts,
             adaptorPackDir,
+            recorder,
           };
           const server = startServer(ctx, port);
+
+          // Idle-timeout fallback: persist sessions abandoned without an explicit
+          // POST /episodes/save so a thinking session is never silently lost.
+          const idleSweep = setInterval(() => {
+            const flushed = recorder.flushIdle(Date.now(), IDLE_TIMEOUT_MS);
+            for (const ep of flushed) {
+              logger.logEvent({
+                event: "episode_saved",
+                ts: new Date().toISOString(),
+                id: ep.id,
+                turns: ep.turns.length,
+                threads: ep.threads.length,
+                trigger: "idle",
+              });
+            }
+          }, IDLE_SWEEP_MS);
 
           logger.logEvent({
             event: "server_start",
@@ -79,6 +107,18 @@ export function createServeCommand(): Command {
           );
 
           const shutdown = (): void => {
+            clearInterval(idleSweep);
+            // Persist any open sessions before exit.
+            for (const ep of recorder.flushAll()) {
+              logger.logEvent({
+                event: "episode_saved",
+                ts: new Date().toISOString(),
+                id: ep.id,
+                turns: ep.turns.length,
+                threads: ep.threads.length,
+                trigger: "shutdown",
+              });
+            }
             server.stop();
             process.exit(0);
           };

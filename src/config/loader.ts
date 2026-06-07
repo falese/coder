@@ -17,6 +17,8 @@ export const DEFAULT_CONFIG: CoderConfig = {
   adaptors_dir: "~/.coder/adaptors",
   models_dir: "~/.coder/models",
   logs_dir: "~/.coder/logs",
+  episodes_dir: "~/.coder/episodes",
+  graph_dir: "~/.coder/graph",
   log_level: "info",
   port: "3991",
   capture_prompts: false,
@@ -80,6 +82,8 @@ function defaultWriteMap(): Record<string, string> {
     adaptors_dir: DEFAULT_CONFIG.adaptors_dir,
     models_dir: DEFAULT_CONFIG.models_dir,
     logs_dir: DEFAULT_CONFIG.logs_dir,
+    episodes_dir: DEFAULT_CONFIG.episodes_dir,
+    graph_dir: DEFAULT_CONFIG.graph_dir,
     log_level: DEFAULT_CONFIG.log_level,
     port: DEFAULT_CONFIG.port,
     capture_prompts: String(DEFAULT_CONFIG.capture_prompts),
@@ -103,6 +107,8 @@ export function loadConfig(): CoderConfig {
     config.adaptors_dir = expandPath(config.adaptors_dir);
     config.models_dir = expandPath(config.models_dir);
     config.logs_dir = expandPath(config.logs_dir);
+    config.episodes_dir = expandPath(config.episodes_dir);
+    config.graph_dir = expandPath(config.graph_dir);
     return config;
   }
 

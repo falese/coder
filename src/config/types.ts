@@ -7,6 +7,8 @@ export interface CoderConfig {
   adaptors_dir: string;
   models_dir: string;
   logs_dir: string;
+  episodes_dir: string;
+  graph_dir: string;
   log_level: LogLevel;
   port: string;
   capture_prompts: boolean;
@@ -18,6 +20,8 @@ export const CONFIG_KEYS = [
   "adaptors_dir",
   "models_dir",
   "logs_dir",
+  "episodes_dir",
+  "graph_dir",
   "log_level",
   "port",
   "capture_prompts",

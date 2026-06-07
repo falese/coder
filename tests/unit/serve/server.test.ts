@@ -2,8 +2,10 @@ import { describe, test, expect, afterEach } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { handleRequest, CORS_HEADERS, resolveRequestSystem } from "../../../src/serve/server.js";
+import { handleRequest, CORS_HEADERS, resolveRequestSystem, buildPromptFromBody } from "../../../src/serve/server.js";
 import type { ServeContext } from "../../../src/serve/server.js";
+import { createSessionRecorder } from "../../../src/episodes/recorder.js";
+import { listEpisodes } from "../../../src/episodes/store.js";
 
 const dryCtx: ServeContext = { model: "/models/test", dryRun: true };
 
@@ -207,6 +209,126 @@ describe("handleRequest — prompt capture", () => {
 // ---------------------------------------------------------------------------
 // Persona trait dial (prompt-layer)
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Cross-turn memory
+// ---------------------------------------------------------------------------
+
+describe("buildPromptFromBody", () => {
+  test("single prompt → raw passthrough", () => {
+    const r = buildPromptFromBody({ prompt: "hello" });
+    expect(r).toEqual({ prompt: "hello", rawPrompt: false, userContent: "hello" });
+  });
+
+  test("messages[] → ChatML, rawPrompt true, userContent = last user", () => {
+    const r = buildPromptFromBody({
+      messages: [
+        { role: "user", content: "first" },
+        { role: "assistant", content: "ok" },
+        { role: "user", content: "second" },
+      ],
+    });
+    expect(r.rawPrompt).toBe(true);
+    expect(r.prompt).toContain("<|im_start|>");
+    expect(r.prompt).toContain("second");
+    expect(r.userContent).toBe("second");
+  });
+
+  test("messages[] + trailing prompt appends a user turn", () => {
+    const r = buildPromptFromBody({
+      messages: [{ role: "user", content: "prior" }],
+      prompt: "latest",
+    });
+    expect(r.userContent).toBe("latest");
+    expect(r.prompt).toContain("latest");
+  });
+
+  test("invalid messages fall back to the single-prompt path", () => {
+    const r = buildPromptFromBody({ messages: "nope", prompt: "p" });
+    expect(r.rawPrompt).toBe(false);
+    expect(r.prompt).toBe("p");
+  });
+});
+
+describe("handleRequest — /generate with messages[]", () => {
+  test("dry-run echoes a ChatML-formatted prompt", async () => {
+    const res = await postGenerate({
+      messages: [
+        { role: "user", content: "earlier" },
+        { role: "assistant", content: "noted" },
+        { role: "user", content: "now what" },
+      ],
+    });
+    const body = await readSse(res);
+    expect(body).toContain("<|im_start|>");
+    expect(body).toContain("now what");
+  });
+
+  test("400 when neither prompt nor messages provided", async () => {
+    const res = await postGenerate({});
+    expect(res.status).toBe(400);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Episode recording + /episodes/save
+// ---------------------------------------------------------------------------
+
+describe("handleRequest — episode recording", () => {
+  let dir: string;
+  afterEach(() => { if (dir) rmSync(dir, { recursive: true, force: true }); });
+
+  test("records exchanges by sessionId and saves on /episodes/save", async () => {
+    dir = mkdtempSync(join(tmpdir(), "coder-serve-ep-"));
+    const recorder = createSessionRecorder({ dir, model: "/models/test" });
+    const ctx: ServeContext = { model: "/models/test", dryRun: true, recorder };
+
+    await readSse(await postGenerate({ prompt: "q1", sessionId: "s1" }, ctx));
+    await readSse(await postGenerate({ prompt: "q2", sessionId: "s1" }, ctx));
+    expect(recorder.has("s1")).toBe(true);
+
+    const save = await handleRequest(
+      new Request("http://localhost:3991/episodes/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: "s1" }),
+      }),
+      ctx,
+    );
+    expect(save.status).toBe(200);
+    const saved = (await save.json()) as { status: string; turns: number };
+    expect(saved.status).toBe("saved");
+    expect(saved.turns).toBe(4); // 2 user + 2 assistant
+    expect(listEpisodes(dir)).toHaveLength(1);
+  });
+
+  test("/episodes/save returns 404 for an unknown session", async () => {
+    dir = mkdtempSync(join(tmpdir(), "coder-serve-ep2-"));
+    const recorder = createSessionRecorder({ dir, model: "/models/test" });
+    const ctx: ServeContext = { model: "/models/test", dryRun: true, recorder };
+    const res = await handleRequest(
+      new Request("http://localhost:3991/episodes/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: "ghost" }),
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(404);
+  });
+
+  test("/episodes/save returns 400 when recording is disabled", async () => {
+    const res = await handleRequest(
+      new Request("http://localhost:3991/episodes/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: "s1" }),
+      }),
+      dryCtx,
+    );
+    expect(res.status).toBe(400);
+  });
+});
 
 describe("resolveRequestSystem", () => {
   test("returns the base system unchanged when no traits given", () => {

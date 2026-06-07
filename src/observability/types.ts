@@ -104,6 +104,23 @@ export interface SelfImprovePromptSourceEvent {
   adaptor: string;
 }
 
+export interface EpisodeSavedEvent {
+  event: "episode_saved";
+  ts: string;
+  id: string;
+  turns: number;
+  threads: number;
+  trigger: "explicit" | "idle" | "shutdown";
+}
+
+export interface GraphBuiltEvent {
+  event: "graph_built";
+  ts: string;
+  nodes: number;
+  edges: number;
+  episodes: number;
+}
+
 export type LogEvent =
   | GenerationStartEvent
   | FirstTokenEvent
@@ -116,7 +133,9 @@ export type LogEvent =
   | SelfImproveSampleEvent
   | SelfImproveRoundEndEvent
   | SelfImproveCompleteEvent
-  | SelfImprovePromptSourceEvent;
+  | SelfImprovePromptSourceEvent
+  | EpisodeSavedEvent
+  | GraphBuiltEvent;
 
 export interface LogLine {
   ts: string;

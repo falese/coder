@@ -77,6 +77,9 @@ What does NOT exist yet: `chat`, `adaptor install/train/eval`, `data` commands.
 - **Self-distillation loop:** `coder adaptor self-improve <name>` samples k completions per captured prompt, eval-scores them (tsc/eslint/tests), retrains on the high-scorers, and **commits only if eval improves** — otherwise rolls back; loss-spike divergence aborts the round (`TrainingDivergedError`).
 - **Persona/voice split:** the *what* (knowledge) stays modular from the *how* (voice). Voice = LoRA (future); knowledge = data/graph (future).
 - **Trait control = prompt-layer (v1):** dialable traits (`formality`/`sarcasm`/`verbosity`, 1–7) are folded into the system prompt at request time (`/generate` `traits` field; `parseTraitCommand`/`applyTraits` in `src/persona/traits.ts`). Adapter-layer traits deferred — no live LoRA blending (one adaptor per session).
+- **Cross-turn memory:** `/generate` accepts `messages[]` (+ `sessionId`); prior turns are windowed + ChatML-formatted server-side via `buildPromptFromBody` (reuses `formatPrompt`/`applyWindow`). Single-`prompt` requests unchanged.
+- **Episodes:** a `sessionId` thinking session is accumulated server-side (`src/episodes/recorder.ts`) into an Episode (turns w/ thought+final + concept threads), persisted under `episodes_dir`. Boundary = explicit `POST /episodes/save` + idle-timeout fallback. `episodeToJsonl` bakes episodes into the `coder data`/`adaptor train` pipeline. Manage via `coder episodes list/show/export`.
+- **Knowledge graph:** `coder graph build/show/query` builds from episode threads (threads → nodes, within-episode co-occurrence → weighted edges) at `graph_dir/knowledge-graph.json`. **Consumption = bake into training data**; inference-time RAG/graph-retrieval stays **out of scope (v1)** (`docs/spec.md`).
 
 ## Backlog priority order
 
