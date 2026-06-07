@@ -1,5 +1,5 @@
 import { runMlxStream } from "../inference/mlx-runner.js";
-import { cleanMlxText } from "./clean.js";
+import { stripFraming, parseChannels } from "./clean.js";
 
 /**
  * Local SSE inference server context.
@@ -55,31 +55,43 @@ function buildGenerateResponse(prompt: string, system: string | undefined, maxTo
         controller.enqueue(encoder.encode(sseEvent(obj)));
       };
       let totalTokens = 0;
-      // Strip mlx_lm framing/stats/special tokens from streamed text. Hold back
-      // the last few chars so a partial closing "==========" banner is never
-      // emitted mid-stream; the remainder is flushed once the stream ends.
-      const HOLDBACK = "==========".length;
+      // Strip mlx_lm framing, then split into thought/final channels so reasoning
+      // models stream both voices (tagged per token). Hold back the tail so a
+      // partial marker (e.g. "<|chann", "==========") is never emitted mid-stream;
+      // the remainder is flushed once the stream ends.
+      const HOLDBACK = 16;
       let raw = "";
-      let emitted = "";
+      let emittedThought = "";
+      let emittedFinal = "";
+
+      const flush = (
+        channel: "thought" | "final",
+        buf: string,
+        emitted: string,
+        withHoldback: boolean,
+      ): string => {
+        const target = withHoldback ? Math.max(0, buf.length - HOLDBACK) : buf.length;
+        if (target > emitted.length) {
+          send({ type: "token", channel, text: buf.slice(emitted.length, target) });
+          totalTokens += 1;
+          return buf.slice(0, target);
+        }
+        return emitted;
+      };
+
       try {
         const reader = tokenStream.getReader();
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
           raw += value;
-          const clean = cleanMlxText(raw);
-          const safeLen = Math.max(0, clean.length - HOLDBACK);
-          if (safeLen > emitted.length) {
-            send({ type: "token", text: clean.slice(emitted.length, safeLen) });
-            emitted = clean.slice(0, safeLen);
-            totalTokens += 1;
-          }
+          const { thought, final } = parseChannels(stripFraming(raw));
+          emittedThought = flush("thought", thought, emittedThought, true);
+          emittedFinal = flush("final", final, emittedFinal, true);
         }
-        const finalClean = cleanMlxText(raw);
-        if (finalClean.length > emitted.length) {
-          send({ type: "token", text: finalClean.slice(emitted.length) });
-          totalTokens += 1;
-        }
+        const { thought, final } = parseChannels(stripFraming(raw));
+        emittedThought = flush("thought", thought, emittedThought, false);
+        emittedFinal = flush("final", final, emittedFinal, false);
         const r = await result;
         send({
           type: "done",
