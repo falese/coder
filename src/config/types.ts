@@ -7,6 +7,7 @@ export interface CoderConfig {
   models_dir: string;
   logs_dir: string;
   log_level: LogLevel;
+  port: string;
 }
 
 export const CONFIG_KEYS = [
@@ -15,6 +16,7 @@ export const CONFIG_KEYS = [
   "models_dir",
   "logs_dir",
   "log_level",
+  "port",
 ] as const;
 
 export type ConfigKey = (typeof CONFIG_KEYS)[number];

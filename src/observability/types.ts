@@ -52,13 +52,22 @@ export interface EvalCompleteEvent {
   record_count: number;
 }
 
+export interface ServerStartEvent {
+  event: "server_start";
+  ts: string;
+  model: string;
+  port: number;
+  adaptor?: string;
+}
+
 export type LogEvent =
   | GenerationStartEvent
   | FirstTokenEvent
   | GenerationCompleteEvent
   | TrainingStepEvent
   | TrainingCompleteEvent
-  | EvalCompleteEvent;
+  | EvalCompleteEvent
+  | ServerStartEvent;
 
 export interface LogLine {
   ts: string;
