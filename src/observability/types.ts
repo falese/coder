@@ -121,6 +121,16 @@ export interface GraphBuiltEvent {
   episodes: number;
 }
 
+export interface PersonaEvalCompleteEvent {
+  event: "persona_eval_complete";
+  ts: string;
+  adaptor: string;
+  mean_f1: number;
+  mean_precision: number;
+  mean_recall: number;
+  record_count: number;
+}
+
 export type LogEvent =
   | GenerationStartEvent
   | FirstTokenEvent
@@ -135,7 +145,8 @@ export type LogEvent =
   | SelfImproveCompleteEvent
   | SelfImprovePromptSourceEvent
   | EpisodeSavedEvent
-  | GraphBuiltEvent;
+  | GraphBuiltEvent
+  | PersonaEvalCompleteEvent;
 
 export interface LogLine {
   ts: string;

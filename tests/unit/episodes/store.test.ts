@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { saveEpisode, loadEpisode, listEpisodes, episodeToJsonl } from "../../../src/episodes/store.js";
+import { saveEpisode, loadEpisode, listEpisodes, episodeToJsonl, episodeToPersonaRecords } from "../../../src/episodes/store.js";
 import type { Episode } from "../../../src/episodes/types.js";
 
 let dir: string;
@@ -78,5 +78,16 @@ describe("episodeToJsonl", () => {
       threads: [],
     };
     expect(episodeToJsonl(ep)).toEqual([]);
+  });
+});
+
+describe("episodeToPersonaRecords", () => {
+  test("carries voice-only completion + the turn's reference threads", () => {
+    const ep = makeEpisode("a", "2026-06-01T00:00:00.000Z");
+    const recs = episodeToPersonaRecords(ep);
+    expect(recs).toHaveLength(1);
+    expect(recs[0].completion).toBe("use a timer"); // threads stripped
+    expect(recs[0].threads).toEqual(["debounce", "timers"]);
+    expect(recs[0].prompt).toContain("how do I debounce?");
   });
 });

@@ -43,6 +43,42 @@ function mockSpawn() {
 // Tests
 // ---------------------------------------------------------------------------
 
+describe("sampleCompletions — pluggable verifier", () => {
+  beforeEach(() => {
+    markPreflightDoneForTest();
+  });
+
+  test("uses scoreSample + prepareCompletion and skips code scorers", async () => {
+    const spy = mockSpawn();
+    try {
+      const seen: { prompt: string; completion: string }[] = [];
+      const results = await sampleCompletions(
+        ["p1"],
+        2,
+        0.7,
+        { model: "/models/test" },
+        { adaptorDir: "/tmp/unused" },
+        {
+          scoreSample: (prompt, completion) => {
+            seen.push({ prompt, completion });
+            return 0.42;
+          },
+          prepareCompletion: (c) => c.toUpperCase(),
+        },
+      );
+      expect(results).toHaveLength(2);
+      expect(results[0].composite).toBe(0.42);
+      expect(results[0].completion).toBe("CONST X = 1;");
+      // scoreSample saw the cleaned (pre-transform) completion
+      expect(seen[0].completion).toBe("const x = 1;");
+      // only MLX generate spawned (2×) — no tsc/eslint/test spawns
+      expect(spy.mock.calls).toHaveLength(2);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
 describe("sampleCompletions", () => {
   beforeEach(() => {
     markPreflightDoneForTest();

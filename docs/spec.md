@@ -143,8 +143,9 @@ coder adaptor install --from-git <url>
 coder adaptor update <name>
 coder adaptor info <name>
 coder adaptor train --config <path>
-coder adaptor eval <name>
-coder adaptor self-improve <name> [--rounds <n>] [--samples <k>] [--threshold <s>] [--temperature <t|adaptive>]
+coder adaptor eval <name> [--persona]
+coder adaptor scaffold <name> --from-episodes
+coder adaptor self-improve <name> [--persona] [--rounds <n>] [--samples <k>] [--threshold <s>] [--temperature <t|adaptive>]
 coder data ingest <glob>
 coder data extract --adaptor <name>
 coder data deduplicate <file.jsonl>
@@ -233,6 +234,7 @@ Required metrics:
 | Cross-turn memory           | `/generate` accepts `messages[]`; prior turns are windowed + ChatML-formatted server-side (reusing `formatPrompt`/`applyWindow`, the `coder chat` path). Single-`prompt` requests are unchanged. |
 | Episodes                    | A thinking session (`sessionId`) is accumulated server-side into an Episode (turns with thought/final + concept threads) and persisted under `episodes_dir`. Boundary = explicit `POST /episodes/save` + idle-timeout fallback flush. `episodeToJsonl` bakes episodes into `{prompt, completion}` for the data/train pipeline. |
 | Knowledge graph             | `coder graph build` derives a graph from episode concept threads (threads → nodes, within-episode co-occurrence → weighted edges) stored at `graph_dir/knowledge-graph.json`. Consumption = **bake into training data** (graph informs episode export). Inference-time RAG/graph-retrieval remains **out of scope (v1)**. |
+| Persona/voice LoRA          | Same SSD engine, **pluggable verifier**. `coder adaptor scaffold <name> --from-episodes` builds a persona pack (voice-only `train.jsonl` + `persona-pool.jsonl`/`persona-eval.jsonl` thread references). `coder adaptor self-improve <name> --persona` samples completions and filters by **thread-recall F1** (vs the code composite); `coder adaptor eval --persona` scores it (writes `persona_f1`). Voice stays in the LoRA; knowledge/threads stay in the graph (modular). Embedding scorer stays out of scope. |
 
 ---
 

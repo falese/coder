@@ -138,6 +138,29 @@ describe("runSelfImprove", () => {
     expect(existsSync(join(adaptorDir, "weights", "adapters.safetensors.bak"))).toBe(false);
   });
 
+  test("deps.loadPool overrides the sampling prompt pool", async () => {
+    const seenPrompts: string[][] = [];
+    const mockSample = mock((prompts: string[]) => {
+      seenPrompts.push(prompts);
+      return Promise.resolve([]);
+    });
+    const mockEval = mock(() => Promise.resolve(makeEvalSummary(0.8)));
+    const mockTrain = mock(() => Promise.resolve(undefined));
+
+    await runSelfImprove(
+      { adaptorDir, modelPath: "/models/test", rounds: 1, samplesPerPrompt: 1, threshold: 0.7, temperature: 0.7, dryRun: false },
+      {
+        evalFn: mockEval,
+        sampleFn: mockSample,
+        trainFn: mockTrain,
+        loadPool: () => ({ prompts: ["pool-A", "pool-B"], source: "prompt-log" }),
+      },
+    );
+
+    expect(seenPrompts.flat().sort()).toEqual(["pool-A", "pool-B"]);
+    expect(mockTrain).not.toHaveBeenCalled(); // no samples returned → no train
+  });
+
   test("rollback path: scoreAfter < scoreBefore → committed: false, checkpoint restored", async () => {
     const originalContent = readFileSync(
       join(adaptorDir, "weights", "adapters.safetensors"),

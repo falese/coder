@@ -60,6 +60,11 @@ interface SelfImproveDeps {
     adaptorDir: string,
     opts: Parameters<typeof runEval>[1],
   ) => Promise<EvalSummary>;
+  /**
+   * Override the sampling-prompt pool (e.g. persona pool from episodes). When
+   * omitted, the pool is loaded from prompt-log.jsonl with an eval-prompt fallback.
+   */
+  loadPool?: (adaptorDir: string, evalPrompts: string[]) => { prompts: string[]; source: "prompt-log" | "eval-fallback" };
 }
 
 // ---------------------------------------------------------------------------
@@ -101,6 +106,7 @@ export async function runSelfImprove(
   const sampleFn = deps.sampleFn ?? sampleCompletions;
   const trainFn = deps.trainFn ?? runMlxTrain;
   const evalFn = deps.evalFn ?? runEval;
+  const loadPool = deps.loadPool ?? loadSamplePrompts;
 
   const weightsDir = join(opts.adaptorDir, "weights");
   const checkpointFile = join(weightsDir, "adapters.safetensors");
@@ -111,7 +117,8 @@ export async function runSelfImprove(
   const evalPrompts = evalPairs.map((r) => r.prompt);
 
   // Use prompt-log.jsonl as sampling pool when present; fall back to eval prompts
-  const { prompts, source: promptSource } = loadSamplePrompts(opts.adaptorDir, evalPrompts);
+  // (persona runs override this via deps.loadPool to sample from episode prompts).
+  const { prompts, source: promptSource } = loadPool(opts.adaptorDir, evalPrompts);
   if (promptSource === "prompt-log") {
     logger.logEvent({
       event: "self_improve_prompt_source",

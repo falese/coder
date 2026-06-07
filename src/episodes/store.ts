@@ -61,3 +61,31 @@ export function episodeToJsonl(episode: Episode): JsonlRecord[] {
   }
   return records;
 }
+
+/** A persona training/eval record: voice-only completion + the turn's reference threads. */
+export interface PersonaRecord {
+  prompt: string;
+  completion: string;
+  threads: string[];
+}
+
+/**
+ * Project an episode into persona records — like `episodeToJsonl` but also
+ * carrying each assistant turn's concept threads (the thread-recall reference).
+ * `completion` is the voice-only answer (threads stripped); `threads` stay
+ * separate so knowledge remains modular from voice.
+ */
+export function episodeToPersonaRecords(episode: Episode): PersonaRecord[] {
+  const records: PersonaRecord[] = [];
+  const history: Turn[] = [];
+  for (const turn of episode.turns) {
+    if (turn.role === "assistant") {
+      const completion = stripThreads(turn.content).trim();
+      if (completion.length > 0 && history.length > 0) {
+        records.push({ prompt: formatPrompt(history), completion, threads: turn.threads ?? [] });
+      }
+    }
+    history.push({ role: turn.role, content: turn.content });
+  }
+  return records;
+}
