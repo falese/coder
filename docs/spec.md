@@ -144,12 +144,15 @@ coder adaptor update <name>
 coder adaptor info <name>
 coder adaptor train --config <path>
 coder adaptor eval <name>
+coder adaptor self-improve <name> [--rounds <n>] [--samples <k>] [--threshold <s>] [--temperature <t|adaptive>]
 coder data ingest <glob>
 coder data extract --adaptor <name>
 coder data deduplicate <file.jsonl>
 coder data validate <file.jsonl>
 coder data split <file.jsonl>
 coder data stats <file.jsonl>
+coder data prompts list|stats|deduplicate|purge --adaptor <name>
+coder serve [--port <p>] [--model <path>] [--adaptor <name>]
 ```
 
 ---
@@ -158,10 +161,13 @@ coder data stats <file.jsonl>
 
 ```toml
 default_model = ""          # HF repo id or local path
+default_adaptor = ""        # adaptor name applied when --adaptor is omitted
 adaptors_dir = "~/.coder/adaptors"
 models_dir = "~/.coder/models"
 logs_dir = "~/.coder/logs"
 log_level = "info"          # debug | info | warn | error
+port = "3991"               # default port for `coder serve`
+capture_prompts = false     # opt-in: log prompts to <adaptor>/data/prompt-log.jsonl for SSD
 ```
 
 CLI flags override config. Config overrides built-in defaults.
@@ -217,6 +223,9 @@ Required metrics:
 | Memory safety gate          | `checkMemory(diskBytes, adaptorBytes)`: estimate = diskBytes × 1.2 + adaptorBytes. Refuse if >18 GB, warn if headroom <2 GB. Bypass: `CODER_DRY_RUN=1`. |
 | `data extract` heuristics   | Structured rules in `extract.json` (adaptor pack root, separate from `manifest.json`). Named anchors: `jsdoc`, `line_comment` → `next_function`, `next_block`. `--adaptor` required; missing `extract.json` is a hard error. |
 | Eval injection format       | `CODER_EVAL_OUTPUT` env var pointing to temp file. See spec above.              |
+| Prompt capture              | Opt-in `capture_prompts`. `generate`/`chat`/`serve` append the user prompt to `<adaptor>/data/prompt-log.jsonl` (prompts only). Never captures in dry-run for CLI; `serve` captures the real user prompt regardless. See `docs/recursive-self-improvement-proposal.md`. |
+| Self-distillation (SSD)     | `coder adaptor self-improve`: sample k completions per captured prompt → eval-score → retrain on high-scorers → commit only if eval improves, else roll back. Loss-spike divergence aborts the round. |
+| Persona trait control       | Prompt-layer v1: a trait vector (`formality`/`sarcasm`/`verbosity`, 1–7) is folded into the system prompt at request time (`/generate` `traits` field). No live LoRA blending (one adaptor per session); adapter-layer traits deferred. |
 
 ---
 

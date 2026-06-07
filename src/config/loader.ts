@@ -13,11 +13,13 @@ export { CONFIG_KEYS } from "./types.js";
 
 export const DEFAULT_CONFIG: CoderConfig = {
   default_model: "",
+  default_adaptor: "",
   adaptors_dir: "~/.coder/adaptors",
   models_dir: "~/.coder/models",
   logs_dir: "~/.coder/logs",
   log_level: "info",
   port: "3991",
+  capture_prompts: false,
 };
 
 export function resolveConfigPath(): string {
@@ -51,7 +53,11 @@ function mergeRawIntoConfig(
   for (const key of CONFIG_KEYS) {
     const value = raw[key];
     if (value === undefined) continue;
-    if (key === "log_level") {
+    if (key === "capture_prompts") {
+      if (typeof value === "boolean") config.capture_prompts = value;
+      else if (value === "true") config.capture_prompts = true;
+      else if (value === "false") config.capture_prompts = false;
+    } else if (key === "log_level") {
       if (typeof value === "string" && (LOG_LEVELS as readonly string[]).includes(value)) {
         config.log_level = value as CoderConfig["log_level"];
       }
@@ -66,20 +72,26 @@ function mergeRawIntoConfig(
   return config;
 }
 
+/** Serialise the string-valued defaults for the seed/persist write maps. */
+function defaultWriteMap(): Record<string, string> {
+  return {
+    default_model: DEFAULT_CONFIG.default_model,
+    default_adaptor: DEFAULT_CONFIG.default_adaptor,
+    adaptors_dir: DEFAULT_CONFIG.adaptors_dir,
+    models_dir: DEFAULT_CONFIG.models_dir,
+    logs_dir: DEFAULT_CONFIG.logs_dir,
+    log_level: DEFAULT_CONFIG.log_level,
+    port: DEFAULT_CONFIG.port,
+    capture_prompts: String(DEFAULT_CONFIG.capture_prompts),
+  };
+}
+
 export function loadConfig(): CoderConfig {
   const configPath = resolveConfigPath();
 
   if (!existsSync(configPath)) {
     mkdirSync(dirname(configPath), { recursive: true });
-    const toWrite: Record<string, string> = {
-      default_model: DEFAULT_CONFIG.default_model,
-      adaptors_dir: DEFAULT_CONFIG.adaptors_dir,
-      models_dir: DEFAULT_CONFIG.models_dir,
-      logs_dir: DEFAULT_CONFIG.logs_dir,
-      log_level: DEFAULT_CONFIG.log_level,
-      port: DEFAULT_CONFIG.port,
-    };
-    writeFileSync(configPath, stringify(toWrite));
+    writeFileSync(configPath, stringify(defaultWriteMap()));
     const config = { ...DEFAULT_CONFIG };
     if (process.env.CODER_MODEL) config.default_model = process.env.CODER_MODEL;
     if (
@@ -114,20 +126,14 @@ export function loadConfig(): CoderConfig {
 
 export function setConfigValue(key: ConfigKey, value: string): void {
   const configPath = resolveConfigPath();
-  const raw: Record<string, string> = {
-    default_model: DEFAULT_CONFIG.default_model,
-    adaptors_dir: DEFAULT_CONFIG.adaptors_dir,
-    models_dir: DEFAULT_CONFIG.models_dir,
-    logs_dir: DEFAULT_CONFIG.logs_dir,
-    log_level: DEFAULT_CONFIG.log_level,
-    port: DEFAULT_CONFIG.port,
-  };
+  const raw: Record<string, string> = defaultWriteMap();
 
   if (existsSync(configPath)) {
     const parsed = parseRaw(configPath);
     for (const k of CONFIG_KEYS) {
       const v = parsed[k];
       if (typeof v === "string") raw[k] = v;
+      else if (typeof v === "boolean") raw[k] = String(v);
     }
   } else {
     mkdirSync(dirname(configPath), { recursive: true });
@@ -139,13 +145,12 @@ export function setConfigValue(key: ConfigKey, value: string): void {
 
 export function getConfigValue(key: ConfigKey): string | undefined {
   const configPath = resolveConfigPath();
-  if (!existsSync(configPath)) {
-    // return the default value
-    return DEFAULT_CONFIG[key];
-  }
+  const defaultVal = DEFAULT_CONFIG[key];
+  const defaultStr = typeof defaultVal === "boolean" ? String(defaultVal) : defaultVal;
+  if (!existsSync(configPath)) return defaultStr;
   const raw = parseRaw(configPath);
-  // If key not in file, return default
   const value = raw[key];
-  if (value === undefined) return DEFAULT_CONFIG[key];
+  if (value === undefined) return defaultStr;
+  if (typeof value === "boolean") return String(value);
   return typeof value === "string" ? value : undefined;
 }

@@ -1,5 +1,8 @@
-import { describe, test, expect } from "bun:test";
-import { handleRequest, CORS_HEADERS } from "../../../src/serve/server.js";
+import { describe, test, expect, afterEach } from "bun:test";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { handleRequest, CORS_HEADERS, resolveRequestSystem } from "../../../src/serve/server.js";
 import type { ServeContext } from "../../../src/serve/server.js";
 
 const dryCtx: ServeContext = { model: "/models/test", dryRun: true };
@@ -137,5 +140,93 @@ describe("handleRequest — unknown routes", () => {
     );
     expect(res.status).toBe(404);
     expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Prompt capture — the think → capture link for the SSD loop
+// ---------------------------------------------------------------------------
+
+describe("handleRequest — prompt capture", () => {
+  let packDir: string;
+
+  afterEach(() => {
+    if (packDir) rmSync(packDir, { recursive: true, force: true });
+  });
+
+  function makePack(): string {
+    const dir = mkdtempSync(join(tmpdir(), "coder-serve-cap-"));
+    mkdirSync(join(dir, "data"), { recursive: true });
+    writeFileSync(
+      join(dir, "manifest.json"),
+      JSON.stringify({ name: "x", version: "1.2.3" }),
+    );
+    return dir;
+  }
+
+  test("appends the prompt to prompt-log.jsonl when capture is enabled", async () => {
+    packDir = makePack();
+    const ctx: ServeContext = {
+      model: "/models/test",
+      dryRun: true,
+      capturePrompts: true,
+      adaptorPackDir: packDir,
+    };
+    const res = await postGenerate({ prompt: "refactor the auth guard" }, ctx);
+    await readSse(res); // drain so the stream's completion handler runs
+
+    const logFile = join(packDir, "data", "prompt-log.jsonl");
+    expect(existsSync(logFile)).toBe(true);
+    const lines = readFileSync(logFile, "utf-8").trim().split("\n");
+    expect(lines).toHaveLength(1);
+    const entry = JSON.parse(lines[0]) as { prompt: string; adaptor_version?: string };
+    expect(entry.prompt).toBe("refactor the auth guard");
+    expect(entry.adaptor_version).toBe("1.2.3");
+  });
+
+  test("does not capture when capturePrompts is false", async () => {
+    packDir = makePack();
+    const ctx: ServeContext = {
+      model: "/models/test",
+      dryRun: true,
+      capturePrompts: false,
+      adaptorPackDir: packDir,
+    };
+    await readSse(await postGenerate({ prompt: "hello" }, ctx));
+    expect(existsSync(join(packDir, "data", "prompt-log.jsonl"))).toBe(false);
+  });
+
+  test("does not capture when no adaptorPackDir is set", async () => {
+    const ctx: ServeContext = { model: "/models/test", dryRun: true, capturePrompts: true };
+    const res = await postGenerate({ prompt: "hello" }, ctx);
+    expect(res.status).toBe(200); // streams fine; nothing to assert on disk
+    await readSse(res);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Persona trait dial (prompt-layer)
+// ---------------------------------------------------------------------------
+
+describe("resolveRequestSystem", () => {
+  test("returns the base system unchanged when no traits given", () => {
+    expect(resolveRequestSystem("be helpful", undefined)).toBe("be helpful");
+    expect(resolveRequestSystem(undefined, undefined)).toBeUndefined();
+  });
+
+  test("folds traits into the system prompt when provided", () => {
+    const out = resolveRequestSystem("be helpful", { sarcasm: 7 });
+    expect(out).toContain("be helpful");
+    expect(out?.toLowerCase()).toContain("sarcas");
+  });
+
+  test("applies traits even when no base system prompt is given", () => {
+    const out = resolveRequestSystem(undefined, { formality: 7 });
+    expect(out).toBeDefined();
+    expect(out?.toLowerCase()).toContain("formality");
+  });
+
+  test("ignores a non-object traits value", () => {
+    expect(resolveRequestSystem("base", "loud")).toBe("base");
   });
 });

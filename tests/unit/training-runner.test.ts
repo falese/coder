@@ -23,6 +23,7 @@ import {
   buildTrainArgs,
   updateManifestVersion,
   runMlxTrain,
+  TrainingDivergedError,
 } from "../../src/training/runner.js";
 import { markPreflightDoneForTest } from "../../src/inference/mlx-runner.js";
 import type { TrainConfig } from "../../src/training/config.js";
@@ -274,6 +275,71 @@ describe("runMlxTrain — real spawn (mocked)", () => {
     expect(stepCalls).toHaveLength(2);
     expect(stepCalls[0][0]).toMatchObject({ event: "training_step", iter: 10, loss: 0.8 });
     expect(stepCalls[1][0]).toMatchObject({ event: "training_step", iter: 20, loss: 0.65 });
+  });
+
+  test("#43: stable loss curve → no TrainingDivergedError", async () => {
+    const config = makeConfig();
+    mkdirSync(config.output.adaptor_dir, { recursive: true });
+    mkdirSync(config.data.dir, { recursive: true });
+
+    // Iter 20+ required for detection; stable loss, never spikes
+    const lines = Array.from({ length: 10 }, (_, i) =>
+      `Iter ${String((i + 1) * 10)}: train loss ${String(0.8 - i * 0.02)}`,
+    ).join("\n") + "\n";
+
+    const mockProc = {
+      stdout: makeStream(lines),
+      stderr: makeStream(""),
+      exited: Promise.resolve(0),
+    };
+    spyOn(Bun, "spawn").mockReturnValue(mockProc as ReturnType<typeof Bun.spawn>);
+
+    await runMlxTrain(config, false); // resolves without error
+  });
+
+  test("#43: loss spike after iter 20 → TrainingDivergedError thrown", async () => {
+    const config = makeConfig();
+    mkdirSync(config.output.adaptor_dir, { recursive: true });
+    mkdirSync(config.data.dir, { recursive: true });
+
+    // Stable at ~0.4 for iters 10-20, then spike to 1.5 at iter 30
+    const stdout = [
+      "Iter 10: train loss 0.400",
+      "Iter 20: train loss 0.380",
+      "Iter 30: train loss 1.500", // > 1.5× rolling mean AND > 0.8
+    ].join("\n") + "\n";
+
+    const mockProc = {
+      stdout: makeStream(stdout),
+      stderr: makeStream(""),
+      exited: Promise.resolve(0),
+      kill: () => {},
+    };
+    spyOn(Bun, "spawn").mockReturnValue(mockProc as ReturnType<typeof Bun.spawn>);
+
+    let threw: unknown;
+    try { await runMlxTrain(config, false); } catch (e) { threw = e; }
+    expect(threw).toBeInstanceOf(TrainingDivergedError);
+  });
+
+  test("#43: loss spike before iter 20 → no error (too early)", async () => {
+    const config = makeConfig();
+    mkdirSync(config.output.adaptor_dir, { recursive: true });
+    mkdirSync(config.data.dir, { recursive: true });
+
+    // Spike at iter 10 — before the guard kicks in at iter 20
+    const stdout = [
+      "Iter 10: train loss 2.000",
+    ].join("\n") + "\n";
+
+    const mockProc = {
+      stdout: makeStream(stdout),
+      stderr: makeStream(""),
+      exited: Promise.resolve(0),
+    };
+    spyOn(Bun, "spawn").mockReturnValue(mockProc as ReturnType<typeof Bun.spawn>);
+
+    await runMlxTrain(config, false); // resolves without error
   });
 
   test("throws on non-zero exit code", async () => {

@@ -25,10 +25,14 @@ export function createServeCommand(): Command {
 
           const dryRun = process.env.CODER_DRY_RUN === "1";
 
-          // Resolve adaptor path — mlx_lm --adapter-path expects the weights dir
+          // Resolve adaptor (flag wins, else config default).
+          const adaptorName = options.adaptor ?? (config.default_adaptor || undefined);
+          // mlx_lm --adapter-path expects the weights dir; capture targets the pack root.
           let adaptorPath: string | undefined;
-          if (options.adaptor) {
-            adaptorPath = join(config.adaptors_dir, options.adaptor, "weights");
+          let adaptorPackDir: string | undefined;
+          if (adaptorName) {
+            adaptorPackDir = join(config.adaptors_dir, adaptorName);
+            adaptorPath = join(adaptorPackDir, "weights");
           }
 
           if (!model) {
@@ -53,7 +57,13 @@ export function createServeCommand(): Command {
             }
           }
 
-          const ctx: ServeContext = { model, adaptorPath, dryRun };
+          const ctx: ServeContext = {
+            model,
+            adaptorPath,
+            dryRun,
+            capturePrompts: config.capture_prompts,
+            adaptorPackDir,
+          };
           const server = startServer(ctx, port);
 
           logger.logEvent({
@@ -61,7 +71,7 @@ export function createServeCommand(): Command {
             ts: new Date().toISOString(),
             model,
             port: server.port,
-            adaptor: options.adaptor,
+            adaptor: adaptorName,
           });
 
           process.stderr.write(

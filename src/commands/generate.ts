@@ -6,6 +6,7 @@ import { loadConfig } from "../config/loader.js";
 import { logger } from "../observability/logger.js";
 import { checkMemory } from "../inference/memory-gate.js";
 import { getModelEntry } from "../models/inspector.js";
+import { capturePrompt } from "../adaptors/prompt-log.js";
 
 function collectStrings(val: string, acc: string[]): string[] {
   return [...acc, val];
@@ -54,10 +55,11 @@ export function createGenerateCommand(): Command {
               `--- context: ${basename(ctxFile)} ---\n${content}\n\n` + finalPrompt;
           }
 
-          // Resolve adaptor path — mlx_lm --adapter-path expects the weights dir
+          // Resolve adaptor (flag wins, else config default) and its weights dir
+          const adaptor = options.adaptor ?? (config.default_adaptor || undefined);
           let adaptorPath: string | undefined;
-          if (options.adaptor) {
-            adaptorPath = join(config.adaptors_dir, options.adaptor, "weights");
+          if (adaptor) {
+            adaptorPath = join(config.adaptors_dir, adaptor, "weights");
           }
 
           const dryRun = process.env.CODER_DRY_RUN === "1";
@@ -77,7 +79,7 @@ export function createGenerateCommand(): Command {
             event: "generation_start",
             ts: new Date().toISOString(),
             model,
-            adaptor: options.adaptor,
+            adaptor,
           });
 
           const runOptions = {
@@ -115,10 +117,24 @@ export function createGenerateCommand(): Command {
             event: "generation_complete",
             ts: new Date().toISOString(),
             model,
-            adaptor: options.adaptor,
+            adaptor,
             ttft_ms: result.ttftMs,
             tok_s: result.tokensPerSecond,
           });
+
+          // Capture the prompt for self-distillation when enabled (opt-in, never in dry-run).
+          if (config.capture_prompts && adaptor && !dryRun) {
+            const adaptorPackDir = join(config.adaptors_dir, adaptor);
+            let adaptorVersion: string | undefined;
+            const manifestPath = join(adaptorPackDir, "manifest.json");
+            if (existsSync(manifestPath)) {
+              try {
+                const m = JSON.parse(readFileSync(manifestPath, "utf-8")) as Record<string, unknown>;
+                if (typeof m.version === "string") adaptorVersion = m.version;
+              } catch { /* ignore — version field is best-effort */ }
+            }
+            capturePrompt(prompt, adaptorPackDir, adaptorVersion);
+          }
 
           if (result.tokensPerSecond !== undefined) {
             process.stderr.write(

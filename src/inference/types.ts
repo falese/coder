@@ -9,6 +9,8 @@ export interface GenerateOptions {
   contextFiles?: string[]; // prepend these files to the prompt
   systemFile?: string;     // path to system prompt file
   rawPrompt?: boolean;     // pass --ignore-chat-template (prompt is pre-formatted)
+  temperature?: number;    // sampling temperature (--temp)
+  topP?: number;           // nucleus sampling cutoff (--top-p)
 }
 
 export interface GenerateResult {

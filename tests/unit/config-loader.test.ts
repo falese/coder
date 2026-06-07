@@ -168,6 +168,51 @@ describe("port config", () => {
   });
 });
 
+describe("default_adaptor config", () => {
+  test("default_adaptor is in CONFIG_KEYS", () => {
+    expect((CONFIG_KEYS as readonly string[]).includes("default_adaptor")).toBe(true);
+  });
+
+  test("defaults to empty string when absent from file", () => {
+    expect(loadConfig().default_adaptor).toBe("");
+  });
+
+  test("reads default_adaptor from the config file", () => {
+    writeFileSync(configPath, `default_adaptor = "react-ts"\n`);
+    expect(loadConfig().default_adaptor).toBe("react-ts");
+  });
+
+  test("set then get round-trips default_adaptor", () => {
+    setConfigValue("default_adaptor", "react-ts");
+    expect(getConfigValue("default_adaptor")).toBe("react-ts");
+  });
+});
+
+describe("capture_prompts config", () => {
+  test("capture_prompts is in CONFIG_KEYS", () => {
+    expect((CONFIG_KEYS as readonly string[]).includes("capture_prompts")).toBe(true);
+  });
+
+  test("defaults to false when absent from file", () => {
+    expect(loadConfig().capture_prompts).toBe(false);
+  });
+
+  test("reads a boolean true from the config file", () => {
+    writeFileSync(configPath, `capture_prompts = true\n`);
+    expect(loadConfig().capture_prompts).toBe(true);
+  });
+
+  test("coerces a string \"true\" to boolean", () => {
+    writeFileSync(configPath, `capture_prompts = "true"\n`);
+    expect(loadConfig().capture_prompts).toBe(true);
+  });
+
+  test("set then get round-trips capture_prompts as a string", () => {
+    setConfigValue("capture_prompts", "true");
+    expect(getConfigValue("capture_prompts")).toBe("true");
+  });
+});
+
 describe("logs_dir config", () => {
   test("logs_dir is in CONFIG_KEYS", () => {
     expect((CONFIG_KEYS as readonly string[]).includes("logs_dir")).toBe(true);
