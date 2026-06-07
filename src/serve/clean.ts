@@ -99,7 +99,9 @@ export function parseChannels(text: string): Channels {
       if (chan) {
         i += chan.length;
         const word = /^[a-zA-Z]+/.exec(text.slice(i, i + 24))?.[0] ?? "";
-        const mapped = KNOWN_CHANNELS[word.toLowerCase()];
+        // Record index access is typed non-undefined without noUncheckedIndexedAccess;
+        // annotate honestly so the truthiness checks below are real (unknown → undefined).
+        const mapped: "thought" | "final" | undefined = KNOWN_CHANNELS[word.toLowerCase()];
         if (mapped) {
           channel = mapped;
           i += word.length;
