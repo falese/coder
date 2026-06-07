@@ -1,4 +1,5 @@
 import { runMlxStream } from "../inference/mlx-runner.js";
+import { cleanMlxText } from "./clean.js";
 
 /**
  * Local SSE inference server context.
@@ -54,15 +55,30 @@ function buildGenerateResponse(prompt: string, system: string | undefined, maxTo
         controller.enqueue(encoder.encode(sseEvent(obj)));
       };
       let totalTokens = 0;
+      // Strip mlx_lm framing/stats/special tokens from streamed text. Hold back
+      // the last few chars so a partial closing "==========" banner is never
+      // emitted mid-stream; the remainder is flushed once the stream ends.
+      const HOLDBACK = "==========".length;
+      let raw = "";
+      let emitted = "";
       try {
         const reader = tokenStream.getReader();
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
-          if (value.length > 0) {
+          raw += value;
+          const clean = cleanMlxText(raw);
+          const safeLen = Math.max(0, clean.length - HOLDBACK);
+          if (safeLen > emitted.length) {
+            send({ type: "token", text: clean.slice(emitted.length, safeLen) });
+            emitted = clean.slice(0, safeLen);
             totalTokens += 1;
-            send({ type: "token", text: value });
           }
+        }
+        const finalClean = cleanMlxText(raw);
+        if (finalClean.length > emitted.length) {
+          send({ type: "token", text: finalClean.slice(emitted.length) });
+          totalTokens += 1;
         }
         const r = await result;
         send({
