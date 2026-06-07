@@ -35,9 +35,30 @@ export interface Channels {
   final: string;
 }
 
+// Pipe placement varies by model/template — tolerate the common malformations
+// (e.g. gemma emits "<channel|>" with no leading pipe). Order longest-first so a
+// startsWith scan picks the most specific marker.
+const CHANNEL_MARKERS = ["<|channel|>", "<|channel>", "<channel|>", "<channel>"];
+const MESSAGE_MARKERS = ["<|message|>", "<|message>", "<message|>", "<message>"];
+const THINK_OPEN = "<think>";
+const THINK_CLOSE = "</think>";
 const GENERIC_TAG = /^<\|[^|>]*\|>/;
-const CHANNEL_OPEN = /^<\|channel\|?>/;
-const CHANNEL_NAME = /^[a-zA-Z_]+/;
+
+const KNOWN_CHANNELS: Record<string, "thought" | "final"> = {
+  analysis: "thought",
+  thinking: "thought",
+  thought: "thought",
+  reasoning: "thought",
+  commentary: "thought",
+  final: "final",
+};
+
+function matchAt(text: string, i: number, markers: string[]): string | null {
+  for (const m of markers) {
+    if (text.startsWith(m, i)) return m;
+  }
+  return null;
+}
 
 /**
  * Split generated text into reasoning ("thought") and answer ("final")
@@ -46,10 +67,13 @@ const CHANNEL_NAME = /^[a-zA-Z_]+/;
  * Recognises:
  *   - DeepSeek style:   <think> … </think> answer
  *   - Harmony style:    <|channel|>analysis<|message|> … <|channel|>final<|message|> …
- *                       (and the single-pipe <|channel>name … variant)
- * Channel "final" → final; any other name (analysis/commentary/thought) →
- * thought. Text with no markers is all "final" (instruct models). Total — never
- * throws.
+ *                       plus pipe-variant markers (<channel|>, <|channel>, …)
+ *
+ * A channel marker followed by a known name (analysis/commentary/… → thought,
+ * final → final) switches voice. A marker with no recognised name (a garbled
+ * switch right before the answer) defaults to "final", so an answer never hides
+ * in the thought channel. Text with no markers is all "final" (instruct models).
+ * Total — never throws.
  */
 export function parseChannels(text: string): Channels {
   let thought = "";
@@ -60,30 +84,38 @@ export function parseChannels(text: string): Channels {
 
   while (i < n) {
     if (text[i] === "<") {
-      if (text.startsWith("<think>", i)) {
+      if (text.startsWith(THINK_OPEN, i)) {
         channel = "thought";
-        i += "<think>".length;
+        i += THINK_OPEN.length;
         continue;
       }
-      if (text.startsWith("</think>", i)) {
+      if (text.startsWith(THINK_CLOSE, i)) {
         channel = "final";
-        i += "</think>".length;
+        i += THINK_CLOSE.length;
         continue;
       }
 
-      const open = CHANNEL_OPEN.exec(text.slice(i, i + 11));
-      if (open) {
-        i += open[0].length;
-        const nameMatch = CHANNEL_NAME.exec(text.slice(i, i + 32));
-        const name = nameMatch ? nameMatch[0] : "thought";
-        channel = name.toLowerCase() === "final" ? "final" : "thought";
-        i += name.length;
-        if (text.startsWith("<|message|>", i)) i += "<|message|>".length;
-        else if (text[i] === " " || text[i] === "\n") i += 1;
+      const chan = matchAt(text, i, CHANNEL_MARKERS);
+      if (chan) {
+        i += chan.length;
+        const word = /^[a-zA-Z]+/.exec(text.slice(i, i + 24))?.[0] ?? "";
+        const mapped = KNOWN_CHANNELS[word.toLowerCase()];
+        if (mapped) {
+          channel = mapped;
+          i += word.length;
+        } else {
+          // Unnamed / unrecognised switch → treat as the answer voice.
+          channel = "final";
+        }
+        const msg = matchAt(text, i, MESSAGE_MARKERS);
+        if (msg) i += msg.length;
+        else if (mapped && (text[i] === " " || text[i] === "\n")) i += 1;
         continue;
       }
-      if (text.startsWith("<|message|>", i)) {
-        i += "<|message|>".length;
+
+      const msgOnly = matchAt(text, i, MESSAGE_MARKERS);
+      if (msgOnly) {
+        i += msgOnly.length;
         continue;
       }
 

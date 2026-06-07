@@ -46,6 +46,19 @@ describe("parseChannels", () => {
     });
   });
 
+  test("handles the leading-pipe-missing <channel|> switch into the answer (gemma)", () => {
+    const raw = "<|channel|>analysis<|message|>reasoning here<channel|>the answer";
+    expect(parseChannels(raw)).toEqual({ thought: "reasoning here", final: "the answer" });
+  });
+
+  test("an unnamed channel switch defaults to the final voice (answer never hidden)", () => {
+    // text right after the marker is content, not a known channel name
+    expect(parseChannels("<think>weighing<channel|>The tension is real.")).toEqual({
+      thought: "weighing",
+      final: "The tension is real.",
+    });
+  });
+
   test("drops other special/chat tokens", () => {
     expect(parseChannels("answer<|im_end|>")).toEqual({ thought: "", final: "answer" });
   });
