@@ -44,14 +44,16 @@ const THINK_OPEN = "<think>";
 const THINK_CLOSE = "</think>";
 const GENERIC_TAG = /^<\|[^|>]*\|>/;
 
-const KNOWN_CHANNELS: Record<string, "thought" | "final"> = {
-  analysis: "thought",
-  thinking: "thought",
-  thought: "thought",
-  reasoning: "thought",
-  commentary: "thought",
-  final: "final",
-};
+// A Map (not a Record) so .get() honestly returns `… | undefined` for unknown
+// names — a Record index is typed non-undefined and would be value-narrowed away.
+const KNOWN_CHANNELS = new Map<string, "thought" | "final">([
+  ["analysis", "thought"],
+  ["thinking", "thought"],
+  ["thought", "thought"],
+  ["reasoning", "thought"],
+  ["commentary", "thought"],
+  ["final", "final"],
+]);
 
 function matchAt(text: string, i: number, markers: string[]): string | null {
   for (const m of markers) {
@@ -99,9 +101,7 @@ export function parseChannels(text: string): Channels {
       if (chan) {
         i += chan.length;
         const word = /^[a-zA-Z]+/.exec(text.slice(i, i + 24))?.[0] ?? "";
-        // Record index access is typed non-undefined without noUncheckedIndexedAccess;
-        // annotate honestly so the truthiness checks below are real (unknown → undefined).
-        const mapped: "thought" | "final" | undefined = KNOWN_CHANNELS[word.toLowerCase()];
+        const mapped = KNOWN_CHANNELS.get(word.toLowerCase());
         if (mapped) {
           channel = mapped;
           i += word.length;
