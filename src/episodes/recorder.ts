@@ -85,7 +85,7 @@ export function createSessionRecorder(opts: RecorderOptions): SessionRecorder {
         ...(ex.threads !== undefined ? { threads: ex.threads } : {}),
         ts,
       });
-      if (ex.threads && ex.threads.length > 0) mergeThreads(s.episode.threads, ex.threads);
+      if (ex.threads !== undefined && ex.threads.length > 0) mergeThreads(s.episode.threads, ex.threads);
       s.episode.endedAt = ts;
       s.lastActivityMs = now();
     },

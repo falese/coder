@@ -25,7 +25,8 @@ describe("SessionRecorder", () => {
     expect(ep?.turns).toHaveLength(4); // 2 user + 2 assistant
     expect(ep?.threads).toEqual(["x", "y", "z"]); // deduped, first-seen order
     // persisted to disk
-    expect(loadEpisode(dir, ep!.id)?.turns).toHaveLength(4);
+    const reloaded = ep ? loadEpisode(dir, ep.id) : null;
+    expect(reloaded?.turns).toHaveLength(4);
   });
 
   test("save() on an unknown session returns null", () => {

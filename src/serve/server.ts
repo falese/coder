@@ -209,7 +209,7 @@ function buildGenerateResponse(params: GenerateParams, ctx: ServeContext): Respo
         // The user input is real regardless of dry-run, so capture it once the
         // generation completes successfully.
         maybeCapture(userContent, ctx);
-        if (ctx.recorder && sessionId !== undefined) {
+        if (ctx.recorder !== undefined && sessionId !== undefined) {
           ctx.recorder.record(sessionId, {
             userContent,
             final,
