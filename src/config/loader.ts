@@ -127,6 +127,8 @@ export function loadConfig(): CoderConfig {
   config.adaptors_dir = expandPath(config.adaptors_dir);
   config.models_dir = expandPath(config.models_dir);
   config.logs_dir = expandPath(config.logs_dir);
+  config.episodes_dir = expandPath(config.episodes_dir);
+  config.graph_dir = expandPath(config.graph_dir);
   return config;
 }
 

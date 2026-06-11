@@ -260,8 +260,12 @@ describe("handleRequest — /generate with messages[]", () => {
       ],
     });
     const body = await readSse(res);
-    expect(body).toContain("<|im_start|>");
-    expect(body).toContain("now what");
+    // The SSE pipeline strips <|…|> markers (parseChannels) and the holdback splits
+    // tokens, so assert on the prior-turn content folded into the prompt instead.
+    // The exact ChatML shape is covered by the buildPromptFromBody unit test.
+    expect(body).toContain("dry-run");
+    expect(body).toContain("earlier");
+    expect(body).toContain("noted");
   });
 
   test("400 when neither prompt nor messages provided", async () => {
