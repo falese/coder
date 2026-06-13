@@ -80,3 +80,8 @@ export const logger = {
   error: (msg: string) => getInstance().error(msg),
   logEvent: (event: LogEvent) => getInstance().logEvent(event),
 };
+
+/** Reset the singleton for tests that need log isolation. Call in beforeEach. */
+export function resetLoggerForTest(): void {
+  _instance = null;
+}

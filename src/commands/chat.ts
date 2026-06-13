@@ -1,12 +1,13 @@
 import { Command } from "commander";
 import * as readline from "node:readline";
-import { writeFileSync, existsSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "../config/loader.js";
 import { runMlxStream } from "../inference/mlx-runner.js";
 import { logger } from "../observability/logger.js";
 import { formatPrompt, applyWindow } from "../chat/history.js";
 import type { Turn } from "../chat/history.js";
+import { capturePrompt } from "../adaptors/prompt-log.js";
 
 export function createChatCommand(): Command {
   return new Command("chat")
@@ -17,6 +18,7 @@ export function createChatCommand(): Command {
       async (options: { model?: string; adaptor?: string }) => {
         const config = loadConfig();
         const model = options.model ?? (config.default_model || undefined);
+        const adaptor = options.adaptor ?? (config.default_adaptor || undefined);
 
         if (!model) {
           process.stderr.write(
@@ -26,8 +28,8 @@ export function createChatCommand(): Command {
         }
 
         let systemFile: string | undefined;
-        if (options.adaptor) {
-          const adaptorDir = join(config.adaptors_dir, options.adaptor);
+        if (adaptor) {
+          const adaptorDir = join(config.adaptors_dir, adaptor);
           const systemPromptPath = join(adaptorDir, "prompts", "system.md");
           if (existsSync(systemPromptPath)) {
             systemFile = systemPromptPath;
@@ -91,8 +93,22 @@ export function createChatCommand(): Command {
             event: "generation_start",
             ts: new Date().toISOString(),
             model,
-            adaptor: options.adaptor,
+            adaptor,
           });
+
+          // Capture the user turn for self-distillation when enabled (never in dry-run).
+          if (config.capture_prompts && adaptor && !dryRun) {
+            const adaptorPackDir = join(config.adaptors_dir, adaptor);
+            let adaptorVersion: string | undefined;
+            const manifestPath = join(adaptorPackDir, "manifest.json");
+            if (existsSync(manifestPath)) {
+              try {
+                const m = JSON.parse(readFileSync(manifestPath, "utf-8")) as Record<string, unknown>;
+                if (typeof m.version === "string") adaptorVersion = m.version;
+              } catch { /* ignore — version field is best-effort */ }
+            }
+            capturePrompt(trimmed, adaptorPackDir, adaptorVersion);
+          }
 
           const { stream, result } = runMlxStream({
             model,
@@ -129,7 +145,7 @@ export function createChatCommand(): Command {
               event: "generation_complete",
               ts: new Date().toISOString(),
               model,
-              adaptor: options.adaptor,
+              adaptor,
               ttft_ms: finalResult.ttftMs,
               tok_s: finalResult.tokensPerSecond,
             });

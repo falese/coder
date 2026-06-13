@@ -60,6 +60,77 @@ export interface ServerStartEvent {
   adaptor?: string;
 }
 
+export interface SelfImproveRoundStartEvent {
+  event: "self_improve_round_start";
+  ts: string;
+  round: number;
+  total_rounds: number;
+  adaptor: string;
+}
+
+export interface SelfImproveSampleEvent {
+  event: "self_improve_sample";
+  ts: string;
+  round: number;
+  generated: number;
+  passed: number;
+  top_composite: number;
+}
+
+export interface SelfImproveRoundEndEvent {
+  event: "self_improve_round_end";
+  ts: string;
+  round: number;
+  score_before: number;
+  score_after: number;
+  delta: number;
+  committed: boolean;
+  abort_reason?: string;
+}
+
+export interface SelfImproveCompleteEvent {
+  event: "self_improve_complete";
+  ts: string;
+  rounds_committed: number;
+  rounds_total: number;
+  final_score: number;
+}
+
+export interface SelfImprovePromptSourceEvent {
+  event: "self_improve_prompt_source";
+  ts: string;
+  source: "prompt-log" | "eval-fallback";
+  count: number;
+  adaptor: string;
+}
+
+export interface EpisodeSavedEvent {
+  event: "episode_saved";
+  ts: string;
+  id: string;
+  turns: number;
+  threads: number;
+  trigger: "explicit" | "idle" | "shutdown";
+}
+
+export interface GraphBuiltEvent {
+  event: "graph_built";
+  ts: string;
+  nodes: number;
+  edges: number;
+  episodes: number;
+}
+
+export interface PersonaEvalCompleteEvent {
+  event: "persona_eval_complete";
+  ts: string;
+  adaptor: string;
+  mean_f1: number;
+  mean_precision: number;
+  mean_recall: number;
+  record_count: number;
+}
+
 export type LogEvent =
   | GenerationStartEvent
   | FirstTokenEvent
@@ -67,7 +138,15 @@ export type LogEvent =
   | TrainingStepEvent
   | TrainingCompleteEvent
   | EvalCompleteEvent
-  | ServerStartEvent;
+  | ServerStartEvent
+  | SelfImproveRoundStartEvent
+  | SelfImproveSampleEvent
+  | SelfImproveRoundEndEvent
+  | SelfImproveCompleteEvent
+  | SelfImprovePromptSourceEvent
+  | EpisodeSavedEvent
+  | GraphBuiltEvent
+  | PersonaEvalCompleteEvent;
 
 export interface LogLine {
   ts: string;

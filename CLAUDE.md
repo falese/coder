@@ -37,7 +37,7 @@ bun run generate      # coder generate (dev)
 
 - Base model + LoRA adaptor must fit within 18GB unified memory
 - `runMlx` is the single subprocess boundary — all mlx_lm calls go through it
-- One adaptor active per session — no hot-swapping
+- One adaptor active per session — no hot-swapping (so runtime adapter-blending is out; persona traits are a prompt-layer dial, not live LoRA swaps)
 - All file I/O paths resolve through config (`~/.coder/config.toml`) — no hardcoded paths
 - Dry-run mode via `CODER_DRY_RUN=1` must remain functional at all times
 
@@ -73,6 +73,14 @@ What does NOT exist yet: `chat`, `adaptor install/train/eval`, `data` commands.
 - **Unknown config keys:** silently ignored on load, rejected with error on `config set`
 - **Config missing on first run:** create with defaults silently, no error
 - **TOML parser:** `smol-toml` (pure TS, no native deps)
+- **Prompt capture (SSD memory):** opt-in via `capture_prompts`; `generate`/`chat`/`serve` append the user prompt to `<adaptor>/data/prompt-log.jsonl` (prompts only — completions are self-distilled at train time). Manage via `coder data prompts list/stats/deduplicate/purge`.
+- **Self-distillation loop:** `coder adaptor self-improve <name>` samples k completions per captured prompt, eval-scores them (tsc/eslint/tests), retrains on the high-scorers, and **commits only if eval improves** — otherwise rolls back; loss-spike divergence aborts the round (`TrainingDivergedError`).
+- **Persona/voice split:** the *what* (knowledge) stays modular from the *how* (voice). Voice = LoRA (future); knowledge = data/graph (future).
+- **Trait control = prompt-layer (v1):** dialable traits (`formality`/`sarcasm`/`verbosity`, 1–7) are folded into the system prompt at request time (`/generate` `traits` field; `parseTraitCommand`/`applyTraits` in `src/persona/traits.ts`). Adapter-layer traits deferred — no live LoRA blending (one adaptor per session).
+- **Cross-turn memory:** `/generate` accepts `messages[]` (+ `sessionId`); prior turns are windowed + ChatML-formatted server-side via `buildPromptFromBody` (reuses `formatPrompt`/`applyWindow`). Single-`prompt` requests unchanged.
+- **Episodes:** a `sessionId` thinking session is accumulated server-side (`src/episodes/recorder.ts`) into an Episode (turns w/ thought+final + concept threads), persisted under `episodes_dir`. Boundary = explicit `POST /episodes/save` + idle-timeout fallback. `episodeToJsonl` bakes episodes into the `coder data`/`adaptor train` pipeline. Manage via `coder episodes list/show/export`.
+- **Knowledge graph:** `coder graph build/show/query` builds from episode threads (threads → nodes, within-episode co-occurrence → weighted edges) at `graph_dir/knowledge-graph.json`. **Consumption = bake into training data**; inference-time RAG/graph-retrieval stays **out of scope (v1)** (`docs/spec.md`).
+- **Persona/voice LoRA = SSD engine + pluggable verifier.** One engine (`sampleCompletions`/`runSelfImprove`), two verifiers: code composite (knowledge) vs **thread-recall F1** (voice, `src/eval/persona.ts`). `coder adaptor scaffold <name> --from-episodes` builds the persona pack from episodes (voice-only `train.jsonl` + `persona-pool.jsonl`/`persona-eval.jsonl` thread refs); `coder adaptor self-improve --persona` trains; `coder adaptor eval --persona` scores (`persona_f1`). Voice→LoRA, knowledge→graph (modular). Closes the loop: think → episode → graph → scaffold → train → eval → `serve --adaptor` → think.
 
 ## Backlog priority order
 

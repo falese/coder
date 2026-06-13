@@ -9,10 +9,21 @@ import {
 } from "../adaptors/manager.js";
 import { loadTrainConfig } from "../training/config.js";
 import { runMlxTrain } from "../training/runner.js";
+import { runSelfImprove } from "../adaptors/self-improve.js";
 import { runEval, formatEvalTable, formatEvalReport, updateManifestScore } from "../eval/runner.js";
+import {
+  runPersonaEval,
+  formatPersonaTable,
+  toEvalSummary,
+  scoreThreadRecall,
+  loadPersonaPool,
+} from "../eval/persona.js";
+import { sampleCompletions } from "../inference/sampler.js";
+import { scaffoldPersonaAdaptor } from "../adaptors/scaffold.js";
+import { stripThreads } from "../episodes/threads.js";
 import { logger } from "../observability/logger.js";
 import { join } from "node:path";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, writeFileSync, readFileSync } from "node:fs";
 
 function getAdaptorsDir(): string {
   return loadConfig().adaptors_dir;
@@ -146,12 +157,13 @@ export function createAdaptorCommand(): Command {
     .option("--model <path>", "Model path (defaults to config default_model)")
     .option("--input <file>", "Override eval JSONL (default: <adaptor>/data/eval.jsonl)")
     .option("--baseline", "Write score to baseline_pass_rate instead of eval_pass_rate")
+    .option("--persona", "Score voice/persona via thread-recall F1 (not code quality)")
     .option("--verbose", "Print generated code and scorer diagnostics to terminal")
     .option("--report <file>", "Write detailed markdown report to file")
     .action(
       async (
         name: string,
-        options: { model?: string; input?: string; baseline?: boolean; verbose?: boolean; report?: string },
+        options: { model?: string; input?: string; baseline?: boolean; persona?: boolean; verbose?: boolean; report?: string },
       ) => {
         const dryRun = process.env.CODER_DRY_RUN === "1";
         const config = loadConfig();
@@ -174,6 +186,43 @@ export function createAdaptorCommand(): Command {
 
         const weightsPath = join(adaptorDir, "weights");
         const adaptorPath = options.baseline === true ? undefined : weightsPath;
+
+        // Persona/voice eval: thread-recall F1 instead of the code composite.
+        if (options.persona === true) {
+          try {
+            const summary = await runPersonaEval(adaptorDir, {
+              modelPath,
+              adaptorPath,
+              inputFile: options.input,
+              dryRun,
+            });
+            process.stdout.write(formatPersonaTable(summary) + "\n");
+
+            const manifestPath = join(adaptorDir, "manifest.json");
+            if (existsSync(manifestPath)) {
+              const m = JSON.parse(readFileSync(manifestPath, "utf-8")) as Record<string, unknown>;
+              m.persona_f1 = summary.meanF1;
+              writeFileSync(manifestPath, JSON.stringify(m, null, 2) + "\n");
+            }
+            process.stdout.write(`Updated persona_f1: ${summary.meanF1.toFixed(3)}\n`);
+
+            logger.logEvent({
+              event: "persona_eval_complete",
+              ts: new Date().toISOString(),
+              adaptor: name,
+              mean_f1: summary.meanF1,
+              mean_precision: summary.meanPrecision,
+              mean_recall: summary.meanRecall,
+              record_count: summary.records.length,
+            });
+          } catch (err) {
+            process.stderr.write(
+              `Error: ${err instanceof Error ? err.message : String(err)}\n`,
+            );
+            process.exit(1);
+          }
+          return;
+        }
 
         try {
           const summary = await runEval(adaptorDir, {
@@ -221,6 +270,151 @@ export function createAdaptorCommand(): Command {
         }
       },
     );
+
+  cmd
+    .command("self-improve <name>")
+    .description("recursively fine-tune an adaptor on its own high-scoring outputs")
+    .option("--rounds <n>", "SSD iterations to run", "3")
+    .option("--samples <k>", "completions per prompt per round", "8")
+    .option("--temperature <t>", "sampling temperature or 'adaptive'", "adaptive")
+    .option("--threshold <score>", "min composite score to keep a sample", "0.7")
+    .option("--model <path>", "base model path (falls back to config default_model)")
+    .option("--persona", "voice mode: verify samples by thread-recall F1, not code quality")
+    .option("--dry-run", "honour CODER_DRY_RUN=1; skip actual inference and training")
+    .action(
+      async (
+        name: string,
+        options: {
+          rounds: string;
+          samples: string;
+          temperature: string;
+          threshold: string;
+          model?: string;
+          persona?: boolean;
+          dryRun?: boolean;
+        },
+      ) => {
+        const dryRun =
+          options.dryRun === true || process.env.CODER_DRY_RUN === "1";
+        const config = loadConfig();
+        const modelPath = options.model ?? config.default_model;
+
+        if (!modelPath && !dryRun) {
+          process.stderr.write(
+            "Error: no model specified. Use --model or set default_model in config\n",
+          );
+          process.exit(1);
+        }
+
+        const adaptorsDir = getAdaptorsDir();
+        const adaptorDir = join(adaptorsDir, name);
+
+        if (!existsSync(adaptorDir)) {
+          process.stderr.write(`Error: adaptor "${name}" not found\n`);
+          process.exit(1);
+        }
+
+        const temperature: number | "adaptive" =
+          options.temperature === "adaptive"
+            ? "adaptive"
+            : parseFloat(options.temperature);
+
+        // Persona/voice mode: same SSD engine, thread-recall verifier (the
+        // pool, per-sample scorer, and gate eval all come from the persona pack).
+        type SsdDeps = Parameters<typeof runSelfImprove>[1];
+        let personaDeps: SsdDeps = {};
+        if (options.persona === true) {
+          const { prompts: poolPrompts, refs } = loadPersonaPool(adaptorDir);
+          personaDeps = {
+            loadPool: () => ({ prompts: poolPrompts, source: "prompt-log" }),
+            sampleFn: (prompts, k, temp, o, e) =>
+              sampleCompletions(prompts, k, temp, o, e, {
+                scoreSample: scoreThreadRecall(refs),
+                prepareCompletion: stripThreads,
+              }),
+            evalFn: async (dir, o) =>
+              toEvalSummary(
+                await runPersonaEval(dir, {
+                  modelPath: o.modelPath,
+                  adaptorPath: o.adaptorPath,
+                  dryRun: o.dryRun,
+                }),
+              ),
+          };
+        }
+
+        try {
+          const totalRounds = parseInt(options.rounds, 10);
+          const results = await runSelfImprove({
+            adaptorDir,
+            modelPath,
+            rounds: totalRounds,
+            samplesPerPrompt: parseInt(options.samples, 10),
+            threshold: parseFloat(options.threshold),
+            temperature,
+            dryRun,
+          }, personaDeps);
+
+          for (const r of results) {
+            const delta = r.scoreAfter - r.scoreBefore;
+            const tag = r.committed ? "[committed]" : "[rolled back]";
+            process.stderr.write(
+              `Round ${String(r.round)}/${String(results.length)}  ` +
+              `generated ${String(r.generated)}  ` +
+              `filtered (>=${options.threshold}): ${String(r.filtered)}  ` +
+              `eval: ${r.scoreBefore.toFixed(3)} -> ${r.scoreAfter.toFixed(3)} ` +
+              `(${delta >= 0 ? "+" : ""}${delta.toFixed(3)}) ${tag}\n`,
+            );
+          }
+
+          const committed = results.filter((r) => r.committed).length;
+          const finalScore = results.reduce(
+            (score, r) => (r.committed ? r.scoreAfter : score),
+            results[0]?.scoreBefore ?? 0,
+          );
+          process.stdout.write(
+            `Self-improvement complete. Final score: ${finalScore.toFixed(3)} ` +
+            `(rounds committed: ${String(committed)}/${String(totalRounds)})\n`,
+          );
+        } catch (err) {
+          process.stderr.write(
+            `Error: ${err instanceof Error ? err.message : String(err)}\n`,
+          );
+          process.exit(1);
+        }
+      },
+    );
+
+  cmd
+    .command("scaffold <name>")
+    .description("Build a persona adaptor pack from captured episodes")
+    .requiredOption("--from-episodes", "Source training data from the episodes store")
+    .action((name: string) => {
+      const config = loadConfig();
+      try {
+        const result = scaffoldPersonaAdaptor({
+          name,
+          episodesDir: config.episodes_dir,
+          adaptorsDir: config.adaptors_dir,
+          baseModel: config.default_model,
+        });
+        process.stdout.write(
+          `Scaffolded persona adaptor "${name}" at ${result.packDir}\n` +
+          `  episodes: ${String(result.episodeCount)}  records: ${String(result.recordCount)}  ` +
+          `train: ${String(result.trainCount)}  eval: ${String(result.evalCount)}\n`,
+        );
+        if (config.default_model.length === 0) {
+          process.stderr.write(
+            "Note: default_model is unset — edit train-config.toml's model.path before training.\n",
+          );
+        }
+      } catch (err) {
+        process.stderr.write(
+          `Error: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+        process.exit(1);
+      }
+    });
 
   return cmd;
 }
