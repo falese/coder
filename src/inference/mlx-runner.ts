@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import type { GenerateOptions, GenerateResult } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -61,6 +62,39 @@ export function markPreflightDoneForTest(): void {
  * `chat`, the buffered `serve` path, the eval harness) on clean output.
  */
 const CHAT_END_TOKENS = ["<|im_end|>", "<|endoftext|>", "<|eot_id|>", "</s>"];
+
+/**
+ * Chat end tokens the model's tokenizer actually knows, to pass as
+ * `--extra-eos-token`.
+ *
+ * Quantized chat models are routinely packaged with `config.json`'s
+ * `eos_token_id` disagreeing with `tokenizer_config.json`'s `eos_token` — e.g.
+ * Qwen2.5-Coder ships 151643 (`<|endoftext|>`) as the former and `<|im_end|>`
+ * (151645) as the latter. The chat-tuned model ends its turn with the token the
+ * *tokenizer* names, which is not in the stop set, so generation never halts and
+ * runs to `--max-tokens`, padding the tail with filler. Naming them explicitly
+ * makes generation stop where the answer ends.
+ *
+ * The set must be intersected with the model's real vocab: `mlx_lm` raises
+ * `ValueError: '<token>' is not a token for this tokenizer` for anything it does
+ * not know. A model given as a bare repo id (resolved from the mlx cache) has no
+ * local directory to read, so it degrades to passing nothing.
+ */
+export function resolveExtraEosTokens(modelPath: string): string[] {
+  const addedTokensPath = join(modelPath, "added_tokens.json");
+  if (!existsSync(addedTokensPath)) return [];
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(addedTokensPath, "utf-8"));
+  } catch {
+    return [];
+  }
+  if (typeof parsed !== "object" || parsed === null) return [];
+
+  const vocab: Record<string, unknown> = parsed as Record<string, unknown>;
+  return CHAT_END_TOKENS.filter((token) => token in vocab);
+}
 
 export function stripChatEndToken(text: string): string {
   let cut = text.length;
@@ -126,6 +160,10 @@ function buildSpawnArgs(options: GenerateOptions): string[] {
       : undefined);
   if (systemText !== undefined && systemText.length > 0) {
     args.push("--system-prompt", systemText);
+  }
+  const extraEos = resolveExtraEosTokens(options.model);
+  if (extraEos.length > 0) {
+    args.push("--extra-eos-token", ...extraEos);
   }
   if (options.rawPrompt === true) {
     args.push("--ignore-chat-template");
