@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   parseMlxOutput,
+  resolveExtraEosTokens,
   runMlx,
   runMlxBuffered,
   runMlxStream,
@@ -143,6 +144,91 @@ describe("runMlx with mocked spawn", () => {
 // ---------------------------------------------------------------------------
 // Chat end tokens — model framing, never generated content
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Extra EOS tokens — make generation actually halt
+// ---------------------------------------------------------------------------
+
+describe("resolveExtraEosTokens", () => {
+  function modelDirWith(addedTokens: Record<string, number> | string): string {
+    const dir = mkdtempSync(join(tmpdir(), "coder-model-"));
+    writeFileSync(
+      join(dir, "added_tokens.json"),
+      typeof addedTokens === "string" ? addedTokens : JSON.stringify(addedTokens),
+    );
+    return dir;
+  }
+
+  test("returns only the chat end tokens the tokenizer actually has", () => {
+    // Passing a token the tokenizer does not know makes mlx_lm raise
+    // ValueError, so the set must be intersected with the model's vocab.
+    const dir = modelDirWith({ "<|im_end|>": 151645, "<|endoftext|>": 151643 });
+    try {
+      expect(resolveExtraEosTokens(dir).sort()).toEqual(["<|endoftext|>", "<|im_end|>"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("ignores chat end tokens absent from the vocab", () => {
+    const dir = modelDirWith({ "<|im_end|>": 151645, "<|fim_pad|>": 151662 });
+    try {
+      expect(resolveExtraEosTokens(dir)).toEqual(["<|im_end|>"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("returns nothing when the model is not a local directory", () => {
+    // e.g. a bare HF repo id resolved from the mlx cache — degrade quietly.
+    expect(resolveExtraEosTokens("mlx-community/Some-Model-4bit")).toEqual([]);
+  });
+
+  test("returns nothing when added_tokens.json is malformed", () => {
+    const dir = modelDirWith("{ not json");
+    try {
+      expect(resolveExtraEosTokens(dir)).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("runMlxBuffered — --extra-eos-token", () => {
+  test("forwards the model's chat end tokens so generation halts", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "coder-model-"));
+    writeFileSync(
+      join(dir, "added_tokens.json"),
+      JSON.stringify({ "<|im_end|>": 151645, "<|endoftext|>": 151643 }),
+    );
+    const spy = spyOn(Bun, "spawn").mockReturnValue(
+      makeMockProcess("==========\nresult\n==========\n", "", 0) as ReturnType<typeof Bun.spawn>,
+    );
+    try {
+      await runMlxBuffered({ model: dir, prompt: "test" });
+      const args: string[] = spy.mock.calls[0]?.[0];
+      const idx = args.indexOf("--extra-eos-token");
+      expect(idx).toBeGreaterThan(-1);
+      expect(args.slice(idx + 1, idx + 3).sort()).toEqual(["<|endoftext|>", "<|im_end|>"]);
+    } finally {
+      spy.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("omits the flag when the model declares no chat end tokens", async () => {
+    const spy = spyOn(Bun, "spawn").mockReturnValue(
+      makeMockProcess("==========\nresult\n==========\n", "", 0) as ReturnType<typeof Bun.spawn>,
+    );
+    try {
+      await runMlxBuffered({ model: "/models/no-such-dir", prompt: "test" });
+      const args: string[] = spy.mock.calls[0]?.[0];
+      expect(args).not.toContain("--extra-eos-token");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
 
 describe("parseMlxOutput — chat end tokens", () => {
   test("truncates at <|im_end|> and drops the degenerate tail after it", () => {
