@@ -1,4 +1,7 @@
 import { describe, test, expect, spyOn, beforeEach } from "bun:test";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
   parseMlxOutput,
   runMlx,
@@ -137,6 +140,43 @@ describe("runMlx with mocked spawn", () => {
 // runMlxBuffered — TTFT + backward-compat alias
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Chat end tokens — model framing, never generated content
+// ---------------------------------------------------------------------------
+
+describe("parseMlxOutput — chat end tokens", () => {
+  test("truncates at <|im_end|> and drops the degenerate tail after it", () => {
+    // A model that does not halt on EOS keeps sampling to the token cap; mlx
+    // echoes the lot. Everything from the first end token on is framing/noise.
+    const raw =
+      "==========\n" +
+      "name: payment-cards\nversion: 1.0.0\n<|im_end|>\n!<|im_end|>\n!<|im_end|>\n" +
+      "==========\nPrompt: 12 tokens, 90.0 tokens-per-sec\n";
+
+    expect(parseMlxOutput(raw).generatedText).toBe("name: payment-cards\nversion: 1.0.0");
+  });
+
+  test("truncates at <|endoftext|>", () => {
+    const raw = "==========\nhello<|endoftext|>trailing\n==========\n";
+
+    expect(parseMlxOutput(raw).generatedText).toBe("hello");
+  });
+
+  test("leaves output without an end token untouched", () => {
+    const raw = "==========\nname: cart\nversion: 1.0.0\n==========\n";
+
+    expect(parseMlxOutput(raw).generatedText).toBe("name: cart\nversion: 1.0.0");
+  });
+
+  test("still reports tokens-per-sec when the tail is truncated", () => {
+    const raw =
+      "==========\ntext<|im_end|>\n!<|im_end|>\n==========\n" +
+      "Generation: 40 tokens, 31.4 tokens-per-sec\n";
+
+    expect(parseMlxOutput(raw).tokensPerSecond).toBeCloseTo(31.4);
+  });
+});
+
 describe("runMlxBuffered", () => {
   beforeEach(() => {
     markPreflightDoneForTest();
@@ -197,6 +237,45 @@ describe("runMlxBuffered", () => {
       const idx = args.indexOf("--top-p");
       expect(idx).toBeGreaterThan(-1);
       expect(args[idx + 1]).toBe("0.9");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("passes the contents of systemFile as --system-prompt, not the path", async () => {
+    // mlx_lm's --system-prompt takes the prompt text; handing it a path would
+    // make the model's system message the literal string "…/system.md".
+    const dir = mkdtempSync(join(tmpdir(), "coder-system-"));
+    const file = join(dir, "system.md");
+    writeFileSync(file, "You are a manifest compiler. Emit only YAML.\n");
+    const spy = spyOn(Bun, "spawn").mockReturnValue(
+      makeMockProcess("==========\nresult\n==========\n", "", 0) as ReturnType<typeof Bun.spawn>,
+    );
+    try {
+      await runMlxBuffered({ model: "/models/test", prompt: "test", systemFile: file });
+      const args: string[] = spy.mock.calls[0]?.[0];
+      const idx = args.indexOf("--system-prompt");
+      expect(idx).toBeGreaterThan(-1);
+      expect(args[idx + 1]).toBe("You are a manifest compiler. Emit only YAML.");
+    } finally {
+      spy.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("passes systemPrompt text straight through as --system-prompt", async () => {
+    const spy = spyOn(Bun, "spawn").mockReturnValue(
+      makeMockProcess("==========\nresult\n==========\n", "", 0) as ReturnType<typeof Bun.spawn>,
+    );
+    try {
+      await runMlxBuffered({
+        model: "/models/test",
+        prompt: "test",
+        systemPrompt: "be terse",
+      });
+      const args: string[] = spy.mock.calls[0]?.[0];
+      const idx = args.indexOf("--system-prompt");
+      expect(args[idx + 1]).toBe("be terse");
     } finally {
       spy.mockRestore();
     }

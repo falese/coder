@@ -23,7 +23,10 @@ first line of your output is the first line of the manifest.
 - `dependencies` — `{ runtime, design-system, mfes }` maps of name → version range.
 - `data` — a GraphQL-mesh BFF block: `sources[]`, each with `name` and a
   `handler` (e.g. `openapi.source`), optional `transforms`, `plugins`.
-- `providesSlots` — array of slot ids this MFE exposes.
+- `providesSlots` — array of slot **objects**, each `{ id, description? }`.
+  A slot id is dot-separated; every segment must contain a letter or be a
+  `{param}` placeholder (`dashboard.{widget}`). Never a bare string, never a
+  `/`, never a purely numeric segment.
 - `performance`, `transforms` — advanced, usually omit.
 
 ## Capability shape
@@ -70,7 +73,9 @@ data:                          # optional, BFF only
       handler:
         openapi:
           source: <path-or-url>
-providesSlots: [<slot-id>, ...]         # optional
+providesSlots:                 # optional
+  - id: <slot.id>
+    description: <string>
 ```
 
 ## Examples

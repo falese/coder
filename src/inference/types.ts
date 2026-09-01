@@ -7,7 +7,8 @@ export interface GenerateOptions {
   stream?: boolean;        // stream tokens as they arrive
   outputFile?: string;     // write output to file instead of stdout
   contextFiles?: string[]; // prepend these files to the prompt
-  systemFile?: string;     // path to system prompt file
+  systemFile?: string;     // path to a system prompt file (contents are read)
+  systemPrompt?: string;   // literal system prompt text (wins over systemFile)
   rawPrompt?: boolean;     // pass --ignore-chat-template (prompt is pre-formatted)
   temperature?: number;    // sampling temperature (--temp)
   topP?: number;           // nucleus sampling cutoff (--top-p)

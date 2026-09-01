@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { GenerateOptions, GenerateResult } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -52,11 +53,29 @@ export function markPreflightDoneForTest(): void {
  *   Prompt: N tokens, M tokens-per-sec
  *   Generation: N tokens, M tokens-per-sec
  */
+/**
+ * Chat-template end tokens. A model that does not halt on EOS keeps sampling to
+ * the token cap, and mlx echoes the whole run — so everything from the first end
+ * token onward is framing and filler, never generated content. Truncating here,
+ * at the single subprocess boundary, keeps every consumer (`generate`, `-o`,
+ * `chat`, the buffered `serve` path, the eval harness) on clean output.
+ */
+const CHAT_END_TOKENS = ["<|im_end|>", "<|endoftext|>", "<|eot_id|>", "</s>"];
+
+export function stripChatEndToken(text: string): string {
+  let cut = text.length;
+  for (const token of CHAT_END_TOKENS) {
+    const idx = text.indexOf(token);
+    if (idx !== -1 && idx < cut) cut = idx;
+  }
+  return cut === text.length ? text : text.slice(0, cut).trimEnd();
+}
+
 export function parseMlxOutput(raw: string): GenerateResult {
   const parts = raw.split("==========");
 
   if (parts.length < 2) {
-    return { generatedText: raw.trim() };
+    return { generatedText: stripChatEndToken(raw.trim()) };
   }
 
   // parts[1] contains the generated text section.
@@ -66,7 +85,7 @@ export function parseMlxOutput(raw: string): GenerateResult {
   // lines[0] is always "" (leading newline after ==========)
   const startLine = lines[1]?.startsWith("Prompt: ") ? 2 : 1;
   const textLines = lines.slice(startLine, -1);
-  const generatedText = textLines.join("\n");
+  const generatedText = stripChatEndToken(textLines.join("\n"));
 
   let tokensPerSecond: number | undefined;
   if (parts.length >= 3 && parts[2].trim()) {
@@ -98,8 +117,15 @@ function buildSpawnArgs(options: GenerateOptions): string[] {
   if (options.adaptor !== undefined) {
     args.push("--adapter-path", options.adaptor);
   }
-  if (options.systemFile !== undefined) {
-    args.push("--system-prompt", options.systemFile);
+  // mlx_lm's --system-prompt takes the prompt *text*; a pack/CLI path must be
+  // read here, at the single subprocess boundary.
+  const systemText =
+    options.systemPrompt ??
+    (options.systemFile !== undefined
+      ? readFileSync(options.systemFile, "utf-8").trim()
+      : undefined);
+  if (systemText !== undefined && systemText.length > 0) {
+    args.push("--system-prompt", systemText);
   }
   if (options.rawPrompt === true) {
     args.push("--ignore-chat-template");

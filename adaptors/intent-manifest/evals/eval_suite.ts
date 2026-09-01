@@ -17,7 +17,36 @@
  */
 import { describe, test, expect } from "bun:test";
 import { readFileSync, existsSync } from "node:fs";
-import { validateManifestText } from "@seans-mfe/plugin-coder";
+import { createRequire } from "node:module";
+
+// `@seans-mfe/plugin-coder` is CommonJS and its `exports` map declares only the
+// `require` condition, so an ESM `import` of it does not resolve. Load it
+// through `createRequire` — the package's own supported entry point — and fail
+// with the fix rather than a bare module-not-found if it is not linked.
+interface ValidationError { path: string; message: string }
+interface ValidationResult {
+  valid: boolean;
+  errors: ValidationError[];
+  manifest?: { type?: string; language?: string; capabilities?: unknown };
+}
+interface CoderOracle {
+  validateManifestText: (text: string) => ValidationResult;
+}
+
+function loadOracle(): CoderOracle {
+  try {
+    return createRequire(import.meta.url)("@seans-mfe/plugin-coder") as CoderOracle;
+  } catch (err) {
+    throw new Error(
+      "@seans-mfe/plugin-coder is not resolvable from the eval sandbox. Build it " +
+        "(`npx tsc -b packages/plugin-coder` in seans-mfe-tool) and link it into " +
+        "coder's node_modules — see this pack's README. Cause: " +
+        (err instanceof Error ? err.message : String(err)),
+    );
+  }
+}
+
+const { validateManifestText } = loadOracle();
 
 const generatedPath = process.env.CODER_EVAL_OUTPUT;
 if (!generatedPath) throw new Error("CODER_EVAL_OUTPUT not set");
@@ -31,9 +60,11 @@ const DSL_LANGUAGES = ["javascript", "typescript", "python", "go", "rust", "java
 
 describe("intent-manifest eval suite (the DSL validator is the oracle)", () => {
   test("generated manifest is DSL-valid", () => {
-    // The load-bearing assertion: schema + semantics both pass.
+    // The load-bearing assertion: schema + semantics both pass. Assert on the
+    // formatted errors first so a failure names *which* rule the manifest broke
+    // — that diff is what lands in `coder adaptor eval --report`.
+    expect(result.errors.map((e) => `${e.path}: ${e.message}`)).toEqual([]);
     expect(result.valid).toBe(true);
-    expect(result.errors).toHaveLength(0);
   });
 
   test("type is a DSL type-enum member", () => {

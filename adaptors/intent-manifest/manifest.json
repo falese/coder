@@ -1,6 +1,6 @@
 {
   "name": "intent-manifest",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "domain": "mfe-dsl",
   "base_model": "Qwen2.5-Coder-7B",
   "mlx_quant": "4bit",
@@ -8,6 +8,6 @@
   "min_memory_gb": 18,
   "author": "",
   "description": "Compile a business intent into a seans-mfe DSL mfe-manifest.yaml",
-  "eval_pass_rate": 0,
-  "baseline_pass_rate": 0
+  "eval_pass_rate": 1,
+  "baseline_pass_rate": 1
 }

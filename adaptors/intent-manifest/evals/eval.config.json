@@ -1,0 +1,6 @@
+{
+  "weights": { "tsc": 0, "eslint": 0, "tests": 1 },
+  "artifact": { "extension": ".yaml", "includePrompt": false },
+  "systemPrompt": "prompts/system.md",
+  "maxTokens": 900
+}
