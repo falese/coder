@@ -2,6 +2,13 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from "node
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { runMlxBuffered, checkPreflight } from "../inference/mlx-runner.js";
+import {
+  DEFAULT_EVAL_WEIGHTS,
+  loadEvalPackConfig,
+  buildEvalArtifact,
+  resolveSystemPrompt,
+} from "./pack-config.js";
+import type { EvalWeights } from "./pack-config.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -33,6 +40,8 @@ export interface EvalSummary {
   meanEslint: number;
   meanTests: number;
   meanComposite: number;
+  /** Dimension weights the composite was computed with (pack config, §eval). */
+  weights?: EvalWeights;
 }
 
 export interface EvalOptions {
@@ -70,11 +79,26 @@ export function cleanGeneratedOutput(raw: string): string {
   return raw.trimEnd();
 }
 
-export function computeComposite(scores: DimensionScores): number {
-  return scores.tsc * 0.4 + scores.eslint * 0.3 + scores.tests * 0.3;
+export function computeComposite(
+  scores: DimensionScores,
+  weights: EvalWeights = DEFAULT_EVAL_WEIGHTS,
+): number {
+  const total = weights.tsc + weights.eslint + weights.tests;
+  if (total === 0) return 0;
+  const weighted =
+    scores.tsc * weights.tsc +
+    scores.eslint * weights.eslint +
+    scores.tests * weights.tests;
+  return weighted / total;
+}
+
+/** Format a dimension cell: unweighted dimensions read "n/a", not "0.0". */
+function cell(score: number, weight: number, digits: number): string {
+  return weight > 0 ? score.toFixed(digits) : "n/a";
 }
 
 export function formatEvalTable(summary: EvalSummary): string {
+  const weights = summary.weights ?? DEFAULT_EVAL_WEIGHTS;
   const col = {
     prompt: 42,
     tsc: 6,
@@ -101,40 +125,42 @@ export function formatEvalTable(summary: EvalSummary): string {
     const prompt = lastLine.length > 40 ? lastLine.slice(0, 40) : lastLine;
     return (
       prompt.padEnd(col.prompt) +
-      rec.scores.tsc.toFixed(1).padEnd(col.tsc) +
-      rec.scores.eslint.toFixed(1).padEnd(col.eslint) +
-      rec.scores.tests.toFixed(1).padEnd(col.tests) +
+      cell(rec.scores.tsc, weights.tsc, 1).padEnd(col.tsc) +
+      cell(rec.scores.eslint, weights.eslint, 1).padEnd(col.eslint) +
+      cell(rec.scores.tests, weights.tests, 1).padEnd(col.tests) +
       rec.composite.toFixed(3)
     );
   });
 
   const meanRow =
     "MEAN".padEnd(col.prompt) +
-    summary.meanTsc.toFixed(1).padEnd(col.tsc) +
-    summary.meanEslint.toFixed(1).padEnd(col.eslint) +
-    summary.meanTests.toFixed(1).padEnd(col.tests) +
+    cell(summary.meanTsc, weights.tsc, 1).padEnd(col.tsc) +
+    cell(summary.meanEslint, weights.eslint, 1).padEnd(col.eslint) +
+    cell(summary.meanTests, weights.tests, 1).padEnd(col.tests) +
     summary.meanComposite.toFixed(3);
 
   return [header, divider, ...rows, divider, meanRow].join("\n");
 }
 
 export function formatEvalReport(summary: EvalSummary): string {
+  const weights = summary.weights ?? DEFAULT_EVAL_WEIGHTS;
   const sections: string[] = [
     `# Eval Report`,
     ``,
     `| Dimension | Mean Score |`,
     `|-----------|------------|`,
-    `| TSC       | ${summary.meanTsc.toFixed(3)}       |`,
-    `| ESLint    | ${summary.meanEslint.toFixed(3)}       |`,
-    `| Tests     | ${summary.meanTests.toFixed(3)}       |`,
+    `| TSC       | ${cell(summary.meanTsc, weights.tsc, 3)}       |`,
+    `| ESLint    | ${cell(summary.meanEslint, weights.eslint, 3)}       |`,
+    `| Tests     | ${cell(summary.meanTests, weights.tests, 3)}       |`,
     `| Composite | ${summary.meanComposite.toFixed(3)}       |`,
     ``,
   ];
 
   for (const rec of summary.records) {
-    const tscIcon = rec.scores.tsc === 1 ? "✓" : "✗";
-    const eslintIcon = rec.scores.eslint === 1 ? "✓" : "✗";
-    const testsIcon = rec.scores.tests === 1 ? "✓" : "✗";
+    const label = (name: string, score: number, weight: number): string =>
+      weight > 0
+        ? `**${name} ${score.toFixed(1)} ${score === 1 ? "✓" : "✗"}**`
+        : `**${name} n/a (unweighted)**`;
 
     sections.push(`---`);
     sections.push(``);
@@ -154,21 +180,21 @@ export function formatEvalReport(summary: EvalSummary): string {
     sections.push(``);
     sections.push(`### Scores`);
     sections.push(``);
-    sections.push(`**TSC ${rec.scores.tsc.toFixed(1)} ${tscIcon}**`);
+    sections.push(label("TSC", rec.scores.tsc, weights.tsc));
     if (rec.diagnostics.tsc) {
       sections.push(`\`\`\``);
       sections.push(rec.diagnostics.tsc.trim());
       sections.push(`\`\`\``);
     }
     sections.push(``);
-    sections.push(`**ESLint ${rec.scores.eslint.toFixed(1)} ${eslintIcon}**`);
+    sections.push(label("ESLint", rec.scores.eslint, weights.eslint));
     if (rec.diagnostics.eslint) {
       sections.push(`\`\`\``);
       sections.push(rec.diagnostics.eslint.trim());
       sections.push(`\`\`\``);
     }
     sections.push(``);
-    sections.push(`**Tests ${rec.scores.tests.toFixed(1)} ${testsIcon}**`);
+    sections.push(label("Tests", rec.scores.tests, weights.tests));
     if (rec.diagnostics.tests) {
       sections.push(`\`\`\``);
       sections.push(rec.diagnostics.tests.trim());
@@ -414,6 +440,8 @@ export async function runEval(
   const inputFile =
     opts.inputFile ?? join(adaptorDir, "data", "eval.jsonl");
   const records = loadEvalRecords(inputFile);
+  const packConfig = loadEvalPackConfig(adaptorDir);
+  const { weights, artifact } = packConfig;
 
   if (opts.dryRun) {
     const dryRecords: EvalRecord[] = records.map((r) => ({
@@ -429,6 +457,7 @@ export async function runEval(
       meanEslint: records.length === 0 ? 0 : 0.5,
       meanTests: records.length === 0 ? 0 : 0.5,
       meanComposite: records.length === 0 ? 0 : 0.5,
+      weights,
     };
   }
 
@@ -450,6 +479,11 @@ export async function runEval(
 
   const evalSuiteFile = join(adaptorDir, "evals", "eval_suite.ts");
 
+  // A pack whose grammar lives in a system prompt (e.g. intent-manifest's DSL
+  // grammar) must be evaluated with that prompt in place — for the baseline run
+  // too, otherwise the lift measures prompting rather than the LoRA.
+  const systemFile = resolveSystemPrompt(adaptorDir, packConfig.systemPrompt);
+
   const evalRecords: EvalRecord[] = [];
 
   for (const record of records) {
@@ -457,25 +491,34 @@ export async function runEval(
       model: opts.modelPath,
       prompt: record.prompt,
       adaptor: opts.adaptorPath,
+      systemFile,
+      maxTokens: packConfig.maxTokens,
     });
 
     const generatedCode = cleanGeneratedOutput(generatedText);
 
-    // Use .tsx so tsc handles JSX syntax in React component completions.
-    // Prepend the prompt (which includes import context) so TSC/ESLint see
-    // the full module — only the completion is stored in the EvalRecord.
+    // Default (.tsx, prompt prepended): tsc handles JSX in React completions and
+    // the scorers see the full module — only the completion is stored in the
+    // EvalRecord. A pack may override both (see evals/eval.config.json).
     const tempFile = join(
       tmpdir(),
-      `coder-eval-${String(Date.now())}.tsx`,
+      `coder-eval-${String(Date.now())}${artifact.extension}`,
     );
-    writeFileSync(tempFile, record.prompt + "\n" + generatedCode);
+    writeFileSync(tempFile, buildEvalArtifact(record.prompt, generatedCode, artifact));
 
+    // Zero-weight dimensions contribute nothing to the composite, so skip the
+    // subprocess entirely rather than record a meaningless pass/fail.
+    const skipped: ScorerResult = { pass: false, output: "" };
     const [tscResult, eslintResult, testsResult] = await Promise.all([
-      runTscCheck(tempFile, declarationsPath),
-      runEslintCheck(tempFile, eslintConfigPath),
-      existsSync(evalSuiteFile)
-        ? runTestsCheck(evalSuiteFile, tempFile)
-        : Promise.resolve<ScorerResult>({ pass: false, output: "no eval suite found" }),
+      weights.tsc > 0 ? runTscCheck(tempFile, declarationsPath) : Promise.resolve(skipped),
+      weights.eslint > 0
+        ? runEslintCheck(tempFile, eslintConfigPath)
+        : Promise.resolve(skipped),
+      weights.tests === 0
+        ? Promise.resolve(skipped)
+        : existsSync(evalSuiteFile)
+          ? runTestsCheck(evalSuiteFile, tempFile)
+          : Promise.resolve<ScorerResult>({ pass: false, output: "no eval suite found" }),
     ]);
 
     // clean up temp file
@@ -495,7 +538,7 @@ export async function runEval(
     evalRecords.push({
       prompt: record.prompt,
       scores,
-      composite: computeComposite(scores),
+      composite: computeComposite(scores, weights),
       generatedCode,
       diagnostics: {
         tsc: tscResult.output,
@@ -511,5 +554,6 @@ export async function runEval(
     meanEslint: mean(evalRecords.map((r) => r.scores.eslint)),
     meanTests: mean(evalRecords.map((r) => r.scores.tests)),
     meanComposite: mean(evalRecords.map((r) => r.composite)),
+    weights,
   };
 }

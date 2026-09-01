@@ -1,0 +1,17 @@
+[model]
+path = "~/.coder/models/mlx-community/Qwen2.5-Coder-7B-Instruct-4bit"
+
+[lora]
+rank = 8
+target_modules = ["q_proj", "v_proj"]
+iters = 200
+batch_size = 2
+learning_rate = 1e-4
+
+[data]
+dir = "adaptors/intent-manifest/data"
+
+[output]
+adaptor_dir = "adaptors/intent-manifest/weights"
+manifest    = "adaptors/intent-manifest/manifest.json"
+log_file    = "adaptors/intent-manifest/training.log"

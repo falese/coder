@@ -1,0 +1,5 @@
+{
+  "rules": [
+    { "prompt": "line_comment", "completion": "next_block" }
+  ]
+}

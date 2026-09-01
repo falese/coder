@@ -47,7 +47,8 @@ adaptor-pack/
 │   ├── train.jsonl
 │   └── eval.jsonl
 ├── evals/
-│   └── eval_suite.ts
+│   ├── eval_suite.ts
+│   └── eval.config.json    # optional — per-pack dimension weights + artifact shape
 ├── prompts/
 │   └── system.md          # system prompt passed to mlx_lm via --system-prompt
 ├── extract.json            # data extraction rules for coder data extract
@@ -124,6 +125,31 @@ const { default: generated } = await import(generatedPath);
 | ESLint compliance           | 30%    | ESLint with adaptor ruleset               |
 | Test pass rate              | 30%    | `bun test evals/eval_suite.ts`            |
 | Embedding similarity        | —      | Dropped from v1, field reserved as `null` |
+
+These weights are the default. A pack whose target artifact is not TypeScript overrides
+them in `evals/eval.config.json` — the `intent-manifest` pack emits YAML and scores
+`tests` alone, making its composite the DSL validator pass-rate.
+
+### `evals/eval.config.json` (optional)
+
+```json
+{
+  "weights": { "tsc": 0, "eslint": 0, "tests": 1 },
+  "artifact": { "extension": ".yaml", "includePrompt": false },
+  "systemPrompt": "prompts/system.md",
+  "maxTokens": 900
+}
+```
+
+| Field | Default | Meaning |
+|---|---|---|
+| `weights` | `{tsc:0.4, eslint:0.3, tests:0.3}` | Composite weights, renormalised over the non-zero dimensions. A zero-weight dimension is **skipped** (no subprocess) rather than scored 0, and prints as `n/a`. |
+| `artifact.extension` | `.tsx` | Extension of the temp file handed to the scorers. |
+| `artifact.includePrompt` | `true` | Prepend the eval prompt to the generated text (code-context packs). `false` for packs whose prompt is prose. |
+| `systemPrompt` | — | Pack-relative system prompt applied at eval time, **including the `--baseline` run**, so the measured lift is the LoRA and not the prompt. |
+| `maxTokens` | mlx-runner default (512) | Generation cap for eval runs. |
+
+Absent file = the historic behaviour, so existing packs are unaffected.
 
 ---
 
@@ -228,6 +254,8 @@ Required metrics:
 | Memory safety gate          | `checkMemory(diskBytes, adaptorBytes)`: estimate = diskBytes × 1.2 + adaptorBytes. Refuse if >18 GB, warn if headroom <2 GB. Bypass: `CODER_DRY_RUN=1`. |
 | `data extract` heuristics   | Structured rules in `extract.json` (adaptor pack root, separate from `manifest.json`). Named anchors: `jsdoc`, `line_comment` → `next_function`, `next_block`. `--adaptor` required; missing `extract.json` is a hard error. |
 | Eval injection format       | `CODER_EVAL_OUTPUT` env var pointing to temp file. See spec above.              |
+| Non-TypeScript adaptor targets | Optional per-pack `evals/eval.config.json` (dimension weights, artifact extension/prompt-prepend, eval-time system prompt, max tokens). Absent = historic `.tsx` / prompt-prepended / 0.4-0.3-0.3 behaviour. |
+| System prompt at the mlx boundary | `GenerateOptions.systemFile` is a **path** whose contents `runMlx` reads and passes as `--system-prompt` (mlx_lm takes the text, not a path); `systemPrompt` carries literal text and wins over `systemFile`. |
 | Prompt capture              | Opt-in `capture_prompts`. `generate`/`chat`/`serve` append the user prompt to `<adaptor>/data/prompt-log.jsonl` (prompts only). Never captures in dry-run for CLI; `serve` captures the real user prompt regardless. See `docs/recursive-self-improvement-proposal.md`. |
 | Self-distillation (SSD)     | `coder adaptor self-improve`: sample k completions per captured prompt → eval-score → retrain on high-scorers → commit only if eval improves, else roll back. Loss-spike divergence aborts the round. |
 | Persona trait control       | Prompt-layer v1: a trait vector (`formality`/`sarcasm`/`verbosity`, 1–7) is folded into the system prompt at request time (`/generate` `traits` field). No live LoRA blending (one adaptor per session); adapter-layer traits deferred. |

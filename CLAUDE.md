@@ -81,6 +81,19 @@ What does NOT exist yet: `chat`, `adaptor install/train/eval`, `data` commands.
 - **Episodes:** a `sessionId` thinking session is accumulated server-side (`src/episodes/recorder.ts`) into an Episode (turns w/ thought+final + concept threads), persisted under `episodes_dir`. Boundary = explicit `POST /episodes/save` + idle-timeout fallback. `episodeToJsonl` bakes episodes into the `coder data`/`adaptor train` pipeline. Manage via `coder episodes list/show/export`.
 - **Knowledge graph:** `coder graph build/show/query` builds from episode threads (threads → nodes, within-episode co-occurrence → weighted edges) at `graph_dir/knowledge-graph.json`. **Consumption = bake into training data**; inference-time RAG/graph-retrieval stays **out of scope (v1)** (`docs/spec.md`).
 - **Persona/voice LoRA = SSD engine + pluggable verifier.** One engine (`sampleCompletions`/`runSelfImprove`), two verifiers: code composite (knowledge) vs **thread-recall F1** (voice, `src/eval/persona.ts`). `coder adaptor scaffold <name> --from-episodes` builds the persona pack from episodes (voice-only `train.jsonl` + `persona-pool.jsonl`/`persona-eval.jsonl` thread refs); `coder adaptor self-improve --persona` trains; `coder adaptor eval --persona` scores (`persona_f1`). Voice→LoRA, knowledge→graph (modular). Closes the loop: think → episode → graph → scaffold → train → eval → `serve --adaptor` → think.
+- **Non-TypeScript adaptor targets = per-pack `evals/eval.config.json`** (`src/eval/pack-config.ts`): dimension `weights` (renormalised; a zero-weight dimension is skipped, not scored 0, and prints `n/a`), `artifact.extension`/`artifact.includePrompt`, `systemPrompt` (pack-relative, applied to `--baseline` runs too), `maxTokens`. Absent file = the historic `.tsx` / prompt-prepended / 0.4-0.3-0.3 behaviour, so `react-ts` is untouched. The `intent-manifest` pack emits YAML and weights `tests` alone, so its composite **is** the DSL validator pass-rate.
+- **System prompt at the mlx boundary:** `systemFile` is a *path* whose contents `runMlx` reads; `systemPrompt` is literal text and wins. mlx_lm's `--system-prompt` takes the text, never a path.
+- **Chat end tokens are framing, not content:** `stripChatEndToken` truncates generated text at the first `<|im_end|>`/`<|endoftext|>`/`<|eot_id|>`/`</s>` inside `parseMlxOutput`. A model that does not halt on EOS otherwise fills the token cap with filler that reaches every buffered consumer. Streaming (`runMlxStream`) still emits raw chunks.
+
+## Current state — intent-manifest adaptor (2026-09-01)
+
+Second shipped adaptor pack (`adaptors/intent-manifest`), for seans-mfe-tool#364: compiles a business intent into a schema-valid `mfe-manifest.yaml`. Qwen2.5-Coder-7B-Instruct-4bit + LoRA r=8, 200 iters, 39 min, 7.18 GB peak, val loss 2.112 → 0.047, adapter 44 MB.
+
+- Prompted eval is **saturated**: base and tuned both 1.000 over the 33 held-out intents, so the issue's `≥ +0.15` lift gate is unreachable. The held-out set shares a generator with the training pairs.
+- The real signal is the **no-system-prompt ablation**: base 0.000, tuned 0.939. Gate future runs there.
+- The first 0.848 baseline was a bug in the pack's own `prompts/system.md` (`providesSlots` documented as strings; the DSL wants `[{id, description?}]`) — not a model gap. Keep the grammar prompt and `packages/dsl/src/schema.ts` in step.
+- End-to-end verified: intent → `coder generate` → `parseAndValidateDirectory` → `remote:generate` (23 files) → `mfe:validate` 7/7 gates, no hand edit.
+- Platform seam is `@seans-mfe/plugin-coder`'s `coder:compile` (ADR-088); it needs `coder` on PATH and works with no `--system`. See the pack README.
 
 ## Backlog priority order
 

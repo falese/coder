@@ -150,7 +150,7 @@ function buildGenerateResponse(params: GenerateParams, ctx: ServeContext): Respo
     maxTokens,
     dryRun: ctx.dryRun,
     adaptor: ctx.adaptorPath,
-    systemFile: system,
+    systemPrompt: system,
     rawPrompt,
   });
 
