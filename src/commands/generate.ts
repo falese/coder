@@ -55,11 +55,18 @@ export function createGenerateCommand(): Command {
               `--- context: ${basename(ctxFile)} ---\n${content}\n\n` + finalPrompt;
           }
 
-          // Resolve adaptor (flag wins, else config default) and its weights dir
+          // Resolve adaptor (flag wins, else config default) and its weights dir.
+          // A weightless (inference-only) pack has no `weights/` dir — it is a
+          // served base model + system prompt, so we must not hand mlx_lm an
+          // --adapter-path that points at nothing. Only pass the path when the
+          // weights are actually present.
           const adaptor = options.adaptor ?? (config.default_adaptor || undefined);
           let adaptorPath: string | undefined;
           if (adaptor) {
-            adaptorPath = join(config.adaptors_dir, adaptor, "weights");
+            const weightsDir = join(config.adaptors_dir, adaptor, "weights");
+            if (existsSync(weightsDir)) {
+              adaptorPath = weightsDir;
+            }
           }
 
           const dryRun = process.env.CODER_DRY_RUN === "1";
