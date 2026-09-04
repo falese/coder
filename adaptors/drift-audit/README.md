@@ -137,3 +137,54 @@ The exact model is a coder-side choice; the bar is only "good enough to propose,
 because the deterministic floor (`verify`) supplies precision (spec §6, ADR-090).
 Do not gate on the model's self-reported `confidence` — it is a ranking hint;
 `precision@k` on the §6b eval is what matters.
+
+### Model selection — the candidate field
+
+This is a **zero-shot** pack (no LoRA), so the served base model's own
+instruction-following, code reading, regex authoring, and *judgment under
+restraint* are the whole game. One non-obvious budget note: coder's 18 GB / 7B
+guidance was sized for a LoRA pack (base **+ adapter + training state** co-resident).
+An inference-only pack carries none of that, so the effective served-model budget is
+much larger than 7B — the real ceiling is weights **plus the KV cache** over an
+ADR+impl+provenance bundle. Don't inherit the 7B default by reflex.
+
+The whole point of propose-then-verify is that the model slot is swappable: pick it
+with data. Run the shortlist through the platform-side §6b git-mined eval and choose
+on **`precision@k` + hardened-pattern hit-rate**, weighting the **`semantic`-finding
+recall** and the **restraint fixtures** — that is where a bigger or reasoning model
+earns its cost. Approximate 4-bit MLX footprints on the 18 GB budget:
+
+| Family | Model (MLX 4-bit) | ~Weights | Fit | Where it's strong |
+|---|---|---|---|---|
+| **Code-instruct** | Qwen2.5-Coder-7B-Instruct | ~4.5 GB | trivial | few-shot reference / baseline |
+| | **Qwen2.5-Coder-14B-Instruct** | ~9 GB | comfortable | **recommended deploy** — best code reading + regex per GB |
+| | Qwen2.5-Coder-32B-Instruct | ~18 GB | tight (KV cache) | strongest code line, if §6b recall demands it |
+| **General** | Gemma 3 12B-it | ~7–8 GB | comfortable | strong instruction-following + restraint; 128K context |
+| | Gemma 3 27B-it | ~15–16 GB | tight | strongest general model that still fits |
+| **Reasoning** | **Qwen3-14B** (thinking on) | ~9 GB | comfortable | judgment-heavy: `semantic` calls + restraint |
+| | Qwen3-30B-A3B (MoE, thinking) | ~9 GB | comfortable | reasoning + MoE speed |
+| | DeepSeek-R1-Distill-Qwen-14B | ~9 GB | comfortable | proven reasoning quant, Qwen-code base |
+| | QwQ-32B | ~18 GB | **avoid on one machine** | strong reasoner, but dense-32B + reasoning KV bricks 18 GB |
+
+Notes:
+
+- **Code-instruct vs. general.** A code-tuned model has the edge on the part that is
+  code-specialized — reading dense TS and authoring a `pattern` that actually matches
+  the source. A general model (Gemma 3) can win on calibration/restraint and swallows
+  bigger bundles (128K context). Genuine co-favorites at 12–14B; decide on §6b.
+- **Reasoning models fit this use case well** — the task is judgment
+  (hardened / semantic / nothing), not generation, and audits are offline so latency
+  is cheap. They also get to test their own hypotheses *inside the thinking channel*
+  ("does this regex match? is this really drift?") without any tool-use — a safe
+  version of self-verification. **This is already supported:** coder's serve path
+  splits reasoning from answer (`parseChannels` in `src/serve/clean.ts`, `thought`
+  vs. `final`), and a finding must come from the **`final`** channel only — the
+  `<think>` / `<|channel|>analysis` scratch-work never reaches the JSON array.
+- **The brick risk is the KV cache, not the weights** — a long reasoning trace over a
+  multi-file bundle inflates the cache several GB on top of the weights. So for a
+  reasoning model prefer a 14B-class dense or an MoE over a dense 32B, and **cap
+  `--max-tokens`** so a runaway trace can't exhaust unified memory.
+- Whichever you pick, **record it here and in `manifest.json`'s `base_model`** — the
+  few-shots may need light per-family re-tuning (a reasoning model and a code model
+  emit differently), and general models are more preamble-prone, so re-check the
+  bare-JSON-no-fences discipline on the `final` channel.
