@@ -95,6 +95,12 @@ Second shipped adaptor pack (`adaptors/intent-manifest`), for seans-mfe-tool#364
 - End-to-end verified: intent → `coder generate` → `parseAndValidateDirectory` → `remote:generate` (23 files) → `mfe:validate` 7/7 gates, no hand edit.
 - Platform seam is `@seans-mfe/plugin-coder`'s `coder:compile` (ADR-088); it needs `coder` on PATH and works with no `--system`. See the pack README.
 
+## Current state — weightless adaptors + drift-audit (2026-09-04)
+
+`ManifestSchema` now carries a `mode` field (`"lora"` | `"inference-only"`, default `"lora"`). LoRA-only fields (`mlx_quant`/`lora_rank`/`min_memory_gb`/`eval_pass_rate`) are required only for `lora` packs (via `superRefine`), so every existing manifest is unaffected. A weightless `inference-only` pack is a served base model + system prompt, no corpus/weights/train-eval gate. `adaptor info` prints the mode and skips absent LoRA rows; `generate` only passes mlx `--adapter-path` when a `weights/` dir exists.
+
+`adaptors/drift-audit` — first weightless pack (governance twin of intent-manifest, per the drift-audit spec / PDR-010 / ADR-090). Reads one ADR clause + its implementing code, emits a **bare JSON array** of typed drift findings: `hardened` (a regex source-matcher) or `semantic` (real but not mechanizable). Precision comes from a deterministic floor **platform-side** (Sentinel `HardenedCheckSchema` + `verify`), not the model — the model proposes candidates only (Trusting-Trust guardrail). **Never trains, never certifies "clean"**, never invents an `enforces` ADR id. `prompts/system.md` is the product (contract + few-shots). `evals/eval_suite.ts` is the coder-side **smoke** only (schema-valid JSON, patterns compile, enforces grounded) over `fixtures/`; the real recall/precision eval is git-mined platform-side (spec §6b), not in coder. Smoke: `bun test ./adaptors/drift-audit/evals/eval_suite.ts` (add `CODER_DRIFT_LIVE=1` in a coder env to validate live model output).
+
 ## Backlog priority order
 
 1. ~~#5 Config~~ ✅ done

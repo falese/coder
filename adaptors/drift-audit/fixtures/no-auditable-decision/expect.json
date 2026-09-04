@@ -1,0 +1,5 @@
+{
+  "directive": "Audit the provided bundle for drift.",
+  "allowEmpty": true,
+  "note": "Reserved case (spec §5): the bundle carries no ADR clause, so an empty array is the correct — and only correct — output. It never means 'looks fine.'"
+}

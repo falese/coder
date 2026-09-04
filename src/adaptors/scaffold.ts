@@ -109,6 +109,7 @@ export function scaffoldPersonaAdaptor(opts: ScaffoldOptions): ScaffoldResult {
     name: opts.name,
     version: "0.1.0",
     domain: "persona",
+    mode: "lora",
     base_model: opts.baseModel,
     mlx_quant: "4bit",
     lora_rank: 8,

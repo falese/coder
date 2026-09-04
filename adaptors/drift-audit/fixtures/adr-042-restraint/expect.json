@@ -1,0 +1,6 @@
+{
+  "directive": "Audit decision ADR-042 for drift between its stated rule and the code that carries it.",
+  "nonEmpty": true,
+  "maxConfidence": 0.4,
+  "note": "Spec DoD #4: on a decision with no clear drift, return ranked LOW-confidence suspects — never an empty 'clean', never a fabricated high-confidence hardened hit. Enforced as: array non-empty AND every finding's confidence <= 0.4."
+}
