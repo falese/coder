@@ -1,0 +1,6 @@
+{
+  "directive": "Audit decision ADR-017 for drift between its stated rule and the code that carries it.",
+  "requireVariants": ["hardened"],
+  "patternMustMatch": "throw new Error(",
+  "note": "The typed-errors rediscovery loop (spec DoD #3): the model must resurface the bare-throw drift as a hardened finding whose pattern matches the offending source."
+}

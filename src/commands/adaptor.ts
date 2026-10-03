@@ -102,11 +102,21 @@ export function createAdaptorCommand(): Command {
         process.stdout.write(`Name:        ${manifest.name}\n`);
         process.stdout.write(`Version:     ${manifest.version}\n`);
         process.stdout.write(`Domain:      ${manifest.domain}\n`);
+        process.stdout.write(`Mode:        ${manifest.mode}\n`);
         process.stdout.write(`Base model:  ${manifest.base_model}\n`);
-        process.stdout.write(`MLX quant:   ${manifest.mlx_quant}\n`);
-        process.stdout.write(`LoRA rank:   ${String(manifest.lora_rank)}\n`);
-        process.stdout.write(`Min memory:  ${String(manifest.min_memory_gb)} GB\n`);
-        process.stdout.write(`Eval pass:   ${String(manifest.eval_pass_rate)}\n`);
+        // LoRA-only fields are absent for a weightless inference-only pack.
+        if (manifest.mlx_quant !== undefined) {
+          process.stdout.write(`MLX quant:   ${manifest.mlx_quant}\n`);
+        }
+        if (manifest.lora_rank !== undefined) {
+          process.stdout.write(`LoRA rank:   ${String(manifest.lora_rank)}\n`);
+        }
+        if (manifest.min_memory_gb !== undefined) {
+          process.stdout.write(`Min memory:  ${String(manifest.min_memory_gb)} GB\n`);
+        }
+        if (manifest.eval_pass_rate !== undefined) {
+          process.stdout.write(`Eval pass:   ${String(manifest.eval_pass_rate)}\n`);
+        }
         process.stdout.write(`Author:      ${manifest.author}\n`);
         process.stdout.write(`Description: ${manifest.description}\n`);
       } catch (err) {

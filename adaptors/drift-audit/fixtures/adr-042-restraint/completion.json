@@ -1,0 +1,18 @@
+[
+  {
+    "kind": "semantic",
+    "enforces": "ADR-042",
+    "message": "Boundary suspect: PriceTicker imports the raw apiClient. It appears unused, but confirm it never issues a request directly instead of going through useQuery.",
+    "where": "packages/ui/src/widgets/PriceTicker.tsx",
+    "evidence": "imports `apiClient` alongside `usePriceQuery`; only a type reference is visible in the excerpt.",
+    "confidence": 0.25
+  },
+  {
+    "kind": "semantic",
+    "enforces": "ADR-042",
+    "message": "Low-confidence suspect: verify LiveFeed reads only through usePriceQuery and adds no ad-hoc fetch as it grows.",
+    "where": "packages/ui/src/widgets/LiveFeed.tsx",
+    "evidence": "currently compliant; flagged only because it sits next to the raw-client import.",
+    "confidence": 0.18
+  }
+]

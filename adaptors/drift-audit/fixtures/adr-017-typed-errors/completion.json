@@ -1,0 +1,12 @@
+[
+  {
+    "kind": "hardened",
+    "id": "bare-throw-new-error",
+    "enforces": "ADR-017",
+    "message": "packages/core/src/checkout.ts raises bare `throw new Error(...)`, but ADR-017 requires typed DomainError subclasses so callers can branch on the error type.",
+    "fix": "Throw a DomainError subclass (e.g. `throw new CartEmptyError()` / `throw new PaymentDeclinedError(reason)`) instead of `new Error(...)`.",
+    "pattern": "\\bthrow\\s+new\\s+Error\\s*\\(",
+    "exempt": "adr-lint-ignore",
+    "confidence": 0.9
+  }
+]

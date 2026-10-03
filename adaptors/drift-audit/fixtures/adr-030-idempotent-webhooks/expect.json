@@ -1,0 +1,5 @@
+{
+  "directive": "Audit decision ADR-030 for drift between its stated rule and the code that carries it.",
+  "requireVariants": ["semantic"],
+  "note": "An ordering constraint no regex can express — must land as a grounded semantic finding, not a stretched hardened pattern."
+}

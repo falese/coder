@@ -1,0 +1,9 @@
+{
+  "name": "drift-audit",
+  "version": "0.1.0",
+  "domain": "governance-drift",
+  "mode": "inference-only",
+  "base_model": "Qwen2.5-Coder-7B-Instruct-4bit",
+  "author": "",
+  "description": "Read an ADR clause + its implementing code; emit a typed HardenedCheck | SemanticFinding drift finding"
+}

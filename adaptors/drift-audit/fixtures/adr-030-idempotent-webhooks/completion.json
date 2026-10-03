@@ -1,0 +1,10 @@
+[
+  {
+    "kind": "semantic",
+    "enforces": "ADR-030",
+    "message": "ADR-030 requires deduping on the event id before any side effect, but handleCharge writes to the ledger before the dedupe guard, so a retried event double-writes.",
+    "where": "packages/api/src/webhooks/stripe.ts (handleCharge)",
+    "evidence": "ledger.record(charge) runs above the `if (seenEvents.has(event.id))` guard.",
+    "confidence": 0.7
+  }
+]
